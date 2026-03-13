@@ -1,0 +1,150 @@
+name: go-live-monthly-retention
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Apply deletion (true/false)"
+        required: false
+        default: "false"
+      retention_days:
+        description: "General snapshot retention days"
+        required: false
+        default: "60"
+      dry_run_snapshot_retention_days:
+        description: "Dry-run snapshot retention days"
+        required: false
+        default: "14"
+      run_log_retention_days:
+        description: "Prod run-log retention days"
+        required: false
+        default: "30"
+      notify_on:
+        description: "Notification groups (ok,error or error)"
+        required: false
+        default: "error"
+  schedule:
+    # Monthly day 1, 07:30 UTC
+    - cron: "30 7 1 * *"
+
+concurrency:
+  group: go-live-monthly-retention
+  cancel-in-progress: false
+
+jobs:
+  run-monthly-retention:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      GO_LIVE_DATASET_STORAGE_ROOT: recommendation_app/go-live/data/storage
+      GO_LIVE_DATASET_POINTER_FILE: latest.json
+      GCS_DATASET_URI: ${{ secrets.GCS_DATASET_URI }}
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      PROD_RETENTION_DAYS: ${{ github.event.inputs.retention_days || '60' }}
+      PROD_DRY_RUN_SNAPSHOT_RETENTION_DAYS: ${{ github.event.inputs.dry_run_snapshot_retention_days || '14' }}
+      PROD_RUN_LOG_RETENTION_DAYS: ${{ github.event.inputs.run_log_retention_days || '30' }}
+      PROD_RETENTION_APPLY: ${{ github.event_name == 'schedule' && 'true' || (github.event.inputs.apply || 'false') }}
+      PROD_RETENTION_NOTIFY_ON: ${{ github.event.inputs.notify_on || 'error' }}
+      PROD_RETENTION_NOTIFY_URL: ${{ secrets.PROD_RETENTION_NOTIFY_URL }}
+      PROD_RETENTION_NOTIFY_BEARER_TOKEN: ${{ secrets.PROD_RETENTION_NOTIFY_BEARER_TOKEN }}
+      PROD_SCHED_NOTIFY_URL: ${{ secrets.PROD_SCHED_NOTIFY_URL }}
+      PROD_SCHED_NOTIFY_BEARER_TOKEN: ${{ secrets.PROD_SCHED_NOTIFY_BEARER_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Auth to Google Cloud (Workload Identity)
+        if: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && secrets.GCP_SERVICE_ACCOUNT != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Auth to Google Cloud (Service Account Key)
+        if: ${{ (secrets.GCP_WORKLOAD_IDENTITY_PROVIDER == '' || secrets.GCP_SERVICE_ACCOUNT == '') && secrets.GCP_SA_KEY != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Validate required cloud settings
+        run: |
+          set -euo pipefail
+          test -n "${GCS_DATASET_URI}"
+          test -n "${GCP_PROJECT_ID}"
+
+      - name: Sync storage from GCS
+        run: |
+          set -euo pipefail
+          mkdir -p "${GO_LIVE_DATASET_STORAGE_ROOT}"
+          gcloud storage rsync --recursive "${GCS_DATASET_URI}" "${GO_LIVE_DATASET_STORAGE_ROOT}"
+          test -f "${GO_LIVE_DATASET_STORAGE_ROOT}/${GO_LIVE_DATASET_POINTER_FILE}"
+
+      - name: Run retention entrypoint
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts
+          python recommendation_app/go-live/code/prod/retention_job_entrypoint.py | tee .artifacts/retention_result.json
+
+      - name: Print retention summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path(".artifacts/retention_result.json")
+          if not path.exists():
+              print("retention_result.json is missing")
+              raise SystemExit(0)
+          text = path.read_text(encoding="utf-8", errors="replace")
+          i = text.find("{")
+          if i < 0:
+              print("No JSON payload found")
+              raise SystemExit(0)
+          payload = json.loads(text[i:])
+          n = payload.get("notification") if isinstance(payload.get("notification"), dict) else {}
+          print("status=", payload.get("status"))
+          print("apply=", payload.get("apply"))
+          print("active_dataset_version=", payload.get("active_dataset_version"))
+          print("deleted_versions=", len(payload.get("deleted_versions", []) or []))
+          print("dry_run_snapshot_deleted=", len(payload.get("dry_run_snapshot_deleted", []) or []))
+          print("run_logs_deleted=", len(payload.get("run_logs_deleted", []) or []))
+          print("notification.sent=", n.get("sent"))
+          print("notification.http_status=", n.get("http_status"))
+          print("notification.reason=", n.get("reason"))
+          PY
+
+      - name: Sync storage back to GCS
+        if: always()
+        run: |
+          set -euo pipefail
+          gcloud storage rsync --recursive --delete-unmatched-destination-objects \
+            "${GO_LIVE_DATASET_STORAGE_ROOT}" "${GCS_DATASET_URI}"
+
+      - name: Upload workflow artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-live-monthly-retention-${{ github.run_id }}
+          path: |
+            .artifacts/retention_result.json
