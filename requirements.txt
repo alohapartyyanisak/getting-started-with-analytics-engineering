@@ -1,0 +1,6 @@
+cachetools
+numpy
+pandas
+pyarrow
+python-dotenv
+streamlit

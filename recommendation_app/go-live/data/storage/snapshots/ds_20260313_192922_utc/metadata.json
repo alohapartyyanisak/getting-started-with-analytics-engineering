@@ -1,0 +1,55 @@
+{
+  "dataset_version": "ds_20260313_192922_utc",
+  "created_at_utc": "2026-03-13T19:29:22.056377+00:00",
+  "row_count": 22470,
+  "schema_hash_sha256": "77cbbe045f59d71dc4c20408854a1b423ac6d09ee78e647ae6218e53a93826e3",
+  "prepared_uri": "file:///Users/yanisakk/Documents/GitHub/getting-started-with-analytics-engineering/recommendation_app/go-live/data/storage/snapshots/ds_20260313_192922_utc/prepared.parquet",
+  "artifacts": {
+    "parquet": {
+      "path": "/Users/yanisakk/Documents/GitHub/getting-started-with-analytics-engineering/recommendation_app/go-live/data/storage/snapshots/ds_20260313_192922_utc/prepared.parquet",
+      "sha256": "f57d81a3dce4daef7b65fdf48545060a07ba0b1195a9fcd0ef0559d56cec8844",
+      "size_bytes": 23839633
+    },
+    "csv": {
+      "path": "/Users/yanisakk/Documents/GitHub/getting-started-with-analytics-engineering/recommendation_app/go-live/data/storage/snapshots/ds_20260313_192922_utc/prepared.csv",
+      "sha256": "e8031aaaac8800b32e40d111be3707ea676bf311ffdec0e5f326a19496c058c6",
+      "size_bytes": 45142751
+    }
+  },
+  "source": {
+    "dataset_source": "managed_snapshot_targeted_manual_override",
+    "parent_dataset_version": "ds_20260310_152024_utc",
+    "parent_metadata_path": "/Users/yanisakk/Documents/GitHub/getting-started-with-analytics-engineering/recommendation_app/go-live/data/storage/snapshots/ds_20260310_152024_utc/metadata.json",
+    "parent_release_summary": {
+      "dataset_version": "ds_20260310_152024_utc",
+      "created_at_utc": "2026-03-10T15:20:24.090459+00:00",
+      "row_count": 22470,
+      "schema_hash_sha256": "77cbbe045f59d71dc4c20408854a1b423ac6d09ee78e647ae6218e53a93826e3",
+      "prepared_uri": "file:///Users/yanisakk/Documents/GitHub/getting-started-with-analytics-engineering/recommendation_app/go-live/data/storage/snapshots/ds_20260310_152024_utc/prepared.parquet",
+      "artifact_path": "/Users/yanisakk/Documents/GitHub/getting-started-with-analytics-engineering/recommendation_app/go-live/data/storage/snapshots/ds_20260310_152024_utc/prepared.parquet",
+      "artifact_sha256": "bb82004ad572141dc2882c5daacf80f3b58d42c33828ddaf4c974c644931d1c1",
+      "metadata_path": "/Users/yanisakk/Documents/GitHub/getting-started-with-analytics-engineering/recommendation_app/go-live/data/storage/snapshots/ds_20260310_152024_utc/metadata.json"
+    }
+  },
+  "problem_queue_revalidation": {
+    "problem_rows_total": 1,
+    "problem_rows_selected": 1,
+    "problem_rows_examined": 1,
+    "rows_direct_now_playable": 0,
+    "rows_replaced": 1,
+    "rows_still_unresolved": 0,
+    "rows_skipped_by_bounded_key": 0,
+    "resolver_keys_skipped_by_bounded_limit": 0,
+    "resolver_error_keys": 0,
+    "bounded_mode": true,
+    "max_problem_rows": 1,
+    "max_resolve_keys": 1,
+    "input_report": "targeted_single_key_manual_override",
+    "input_statuses": [
+      "targeted_single_key_manual_override"
+    ],
+    "report_path": "/Users/yanisakk/Documents/GitHub/getting-started-with-analytics-engineering/recommendation_app/go-live/data/storage/snapshots/ds_20260313_192922_utc/youtube_problem_queue_revalidation_report.csv",
+    "resolver_module": "go-live/code/test/application_phase2.py",
+    "selection_mode": "manual_override_after_user_validation"
+  }
+}

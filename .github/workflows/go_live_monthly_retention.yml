@@ -99,7 +99,11 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${GO_LIVE_DATASET_STORAGE_ROOT}"
-          gcloud storage rsync --recursive "${GCS_DATASET_URI}" "${GO_LIVE_DATASET_STORAGE_ROOT}"
+          if gcloud storage ls "${GCS_DATASET_URI}" >/dev/null 2>&1; then
+            gcloud storage rsync --recursive "${GCS_DATASET_URI}" "${GO_LIVE_DATASET_STORAGE_ROOT}" || true
+          else
+            echo "GCS bootstrap path is empty; using repo-seeded storage files."
+          fi
           test -f "${GO_LIVE_DATASET_STORAGE_ROOT}/${GO_LIVE_DATASET_POINTER_FILE}"
 
       - name: Run retention entrypoint
