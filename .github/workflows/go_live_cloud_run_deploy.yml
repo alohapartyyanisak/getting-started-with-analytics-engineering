@@ -105,6 +105,7 @@ jobs:
             --region "${GCP_REGION}" \
             --platform managed \
             --allow-unauthenticated \
+            --service-account "${GCP_SERVICE_ACCOUNT}" \
             --set-env-vars "GCS_DATASET_URI=${GCS_DATASET_URI},GO_LIVE_SYNC_FROM_GCS=true,GO_LIVE_DATASET_STORAGE_ROOT=${GO_LIVE_DATASET_STORAGE_ROOT}" \
             --labels "app=dj-mixing-station,component=go-live,environment=${{ github.event.inputs.deploy_environment }}"
 
