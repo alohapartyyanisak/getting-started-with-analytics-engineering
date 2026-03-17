@@ -47,6 +47,26 @@ def _snapshot_dir(version: str, dataset_root: Path) -> Path:
     return dataset_root / "snapshots" / version
 
 
+def _resolve_storage_path(path_text: str, snapshot_dir: Path) -> Path:
+    text = str(path_text or "").strip()
+    if not text:
+        return Path("")
+    candidate = Path(text).expanduser()
+    if candidate.is_absolute():
+        return candidate
+
+    dataset_root = snapshot_dir.parent.parent
+    dataset_candidate = (dataset_root / candidate).resolve()
+    if dataset_candidate.exists():
+        return dataset_candidate
+
+    snapshot_candidate = (snapshot_dir / candidate).resolve()
+    if snapshot_candidate.exists():
+        return snapshot_candidate
+
+    return dataset_candidate
+
+
 def _extract_video_id(watch_url: object, explicit_video_id: object) -> str:
     direct = str(explicit_video_id or "").strip()
     if direct and direct.lower() != "nan":
@@ -80,7 +100,7 @@ def _load_report(snapshot_dir: Path, metadata: dict[str, Any]) -> tuple[str, pd.
     else:
         return "none", None, None
 
-    report_path = Path(path) if path else None
+    report_path = _resolve_storage_path(path, snapshot_dir) if path else None
     if report_path is None or not report_path.exists():
         local_candidates = {
             "problem_queue_revalidation": snapshot_dir / "youtube_problem_queue_revalidation_report.csv",
@@ -157,7 +177,7 @@ def _validate_contract(metadata: dict[str, Any], snapshot_dir: Path, df: pd.Data
             if not path_text:
                 failures.append(f"artifact path missing for {name}")
                 continue
-            if not Path(path_text).exists():
+            if not _resolve_storage_path(path_text, snapshot_dir).exists():
                 failures.append(f"artifact path not found for {name}: {path_text}")
 
     if df.empty:
