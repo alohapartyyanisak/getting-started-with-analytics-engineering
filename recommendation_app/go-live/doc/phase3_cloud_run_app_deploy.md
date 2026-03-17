@@ -61,7 +61,7 @@ Recommended values:
 6. Passes:
    - `GCS_DATASET_URI`
    - `GO_LIVE_SYNC_FROM_GCS=true`
-   - `GO_LIVE_DATASET_STORAGE_ROOT=/app/recommendation_app/go-live/data/storage`
+   - `GO_LIVE_DATASET_STORAGE_ROOT=/tmp/go-live/data/storage`
 7. Prints the deployed service URL.
 
 ## Manual Deploy

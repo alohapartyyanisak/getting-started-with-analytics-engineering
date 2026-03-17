@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=8080 \
-    GO_LIVE_DATASET_STORAGE_ROOT=/app/recommendation_app/go-live/data/storage \
+    GO_LIVE_DATASET_STORAGE_ROOT=/tmp/go-live/data/storage \
     GO_LIVE_SYNC_FROM_GCS=true
 
 WORKDIR /app
