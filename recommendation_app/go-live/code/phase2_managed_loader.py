@@ -134,6 +134,17 @@ def _resolve_artifact_path(prepared_uri: str, dataset_root: Path) -> Path:
     return (dataset_root / prepared_uri).resolve()
 
 
+def _fallback_snapshot_artifact_path(release: DatasetRelease, dataset_root: Path, artifact: Path) -> Path:
+    """Recover from machine-specific absolute paths embedded in snapshot metadata.
+
+    Seed snapshots created on one machine may carry an absolute file path in
+    metadata. When that snapshot is moved to a different environment, prefer an
+    artifact with the same basename inside the current snapshot directory.
+    """
+    snapshot_candidate = (dataset_root / "snapshots" / release.version / artifact.name).resolve()
+    return snapshot_candidate if snapshot_candidate.exists() else artifact
+
+
 def validate_prepared_dataset(df: pd.DataFrame, expected_schema_hash: str | None = None) -> pd.DataFrame:
     missing = sorted(REQUIRED_PREPARED_COLUMNS - set(df.columns))
     if missing:
@@ -171,6 +182,8 @@ def load_prepared_dataset(version: str | None = None, dataset_root: Path | None 
             ) from exc
     else:
         artifact = _resolve_artifact_path(release.prepared_uri, root)
+        if not artifact.exists():
+            artifact = _fallback_snapshot_artifact_path(release, root, artifact)
         if not artifact.exists():
             raise FileNotFoundError(f"Prepared dataset artifact not found: {artifact}")
 
