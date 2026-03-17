@@ -1,0 +1,113 @@
+name: music-daily-pipeline
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * *'
+
+jobs:
+  music-pipeline:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:13
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: greenery
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d greenery"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: ${{ secrets.PGHOST || '127.0.0.1' }}
+      PGPORT: ${{ secrets.PGPORT || '5432' }}
+      PGDATABASE: ${{ secrets.PGDATABASE || 'greenery' }}
+      PGUSER: ${{ secrets.PGUSER || 'postgres' }}
+      PGPASSWORD: ${{ secrets.PGPASSWORD || 'postgres' }}
+      KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+      KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Wait for Postgres
+        run: |
+          python - <<'PY'
+          import os
+          import time
+          import psycopg2
+
+          for attempt in range(30):
+              try:
+                  conn = psycopg2.connect(
+                      host=os.environ['PGHOST'],
+                      port=os.environ['PGPORT'],
+                      dbname=os.environ['PGDATABASE'],
+                      user=os.environ['PGUSER'],
+                      password=os.environ['PGPASSWORD'],
+                  )
+                  conn.close()
+                  print('Postgres is ready')
+                  break
+              except Exception as exc:
+                  if attempt == 29:
+                      raise
+                  print(f'Waiting for Postgres ({attempt + 1}/30): {exc}')
+                  time.sleep(2)
+          PY
+
+      - name: Run ingestion
+        run: |
+          python setup/scripts/music_ingest.py \
+            --target-table raw_music.spotify_youtube_source \
+            --mode replace
+
+      - name: Create dbt profile
+        run: |
+          mkdir -p ~/.dbt
+          cat > ~/.dbt/profiles.yml <<PROFILE
+          music_analytics:
+            outputs:
+              ci:
+                type: postgres
+                threads: 1
+                host: "${PGHOST}"
+                port: "${PGPORT}"
+                user: "${PGUSER}"
+                pass: "{{ env_var('DBT_ENV_SECRET_PG_PASSWORD') }}"
+                dbname: "${PGDATABASE}"
+                schema: analytics
+            target: ci
+          PROFILE
+
+      - name: Run dbt models and tests
+        env:
+          DBT_ENV_SECRET_PG_PASSWORD: ${{ env.PGPASSWORD }}
+        run: |
+          dbt deps --project-dir music_analytics
+          dbt run --project-dir music_analytics
+          dbt test --project-dir music_analytics
+
+      - name: Upload dbt artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-artifacts
+          path: music_analytics/target
