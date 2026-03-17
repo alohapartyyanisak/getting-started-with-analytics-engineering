@@ -75,3 +75,38 @@ Env vars (optional):
 - `GO_LIVE_DATASET_VERSION` (force specific version)
 - `GO_LIVE_DATASET_URI` (explicit root path / file URI)
 - `GO_LIVE_PRIMARY_ARTIFACT_ROOT_URI` (optional cloud artifact root URI, e.g. `s3://my-bucket/dj-mixing-station`)
+
+## Phase 3 Container Runtime
+
+Files added for Phase 3 hosting bootstrap:
+
+- root `Dockerfile`
+- root `.dockerignore`
+- `recommendation_app/go-live/.env.example`
+- `recommendation_app/go-live/code/.env.sample`
+
+Build from repo root:
+
+```bash
+docker build -t dj-mixing-station-go-live .
+```
+
+Run locally:
+
+```bash
+docker run --rm -p 8505:8080 --env-file recommendation_app/go-live/.env.example dj-mixing-station-go-live
+```
+
+Container behavior:
+- runs Streamlit on `0.0.0.0:$PORT`
+- defaults `PORT=8080`
+- uses `GO_LIVE_DATASET_STORAGE_ROOT=/app/recommendation_app/go-live/data/storage`
+- can sync dataset storage from `GCS_DATASET_URI` at startup when `GO_LIVE_SYNC_FROM_GCS=true`
+- keeps support for `GO_LIVE_DATASET_VERSION` when you want to force a reviewed snapshot
+- uses `recommendation_app/go-live/.env.example` as the canonical go-live env template
+
+Container health signal:
+
+```bash
+python recommendation_app/go-live/code/phase2_health_check.py
+```

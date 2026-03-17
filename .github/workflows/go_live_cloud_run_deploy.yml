@@ -1,0 +1,119 @@
+name: go-live-cloud-run-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Optional image tag override"
+        required: false
+        default: ""
+      deploy_environment:
+        description: "Deploy environment label"
+        required: false
+        default: "staging"
+
+concurrency:
+  group: go-live-cloud-run-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GAR_REPOSITORY: ${{ vars.GAR_REPOSITORY }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      GCS_DATASET_URI: ${{ secrets.GCS_DATASET_URI }}
+      GO_LIVE_DATASET_STORAGE_ROOT: /app/recommendation_app/go-live/data/storage
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.image_tag }}"
+          if [ -z "${TAG}" ]; then
+            TAG="${GITHUB_SHA}"
+          fi
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Auth to Google Cloud (Workload Identity)
+        if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && env.GCP_SERVICE_ACCOUNT != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Auth to Google Cloud (Service Account Key)
+        if: ${{ (env.GCP_WORKLOAD_IDENTITY_PROVIDER == '' || env.GCP_SERVICE_ACCOUNT == '') && env.GCP_SA_KEY != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ env.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Validate deploy settings
+        run: |
+          set -euo pipefail
+          test -n "${GCP_PROJECT_ID}"
+          test -n "${GCP_REGION}"
+          test -n "${GAR_REPOSITORY}"
+          test -n "${CLOUD_RUN_SERVICE}"
+          test -n "${GCS_DATASET_URI}"
+
+      - name: Configure Docker auth
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build image
+        env:
+          IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/go-live-app:${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker build -t "${IMAGE_URI}" .
+
+      - name: Push image
+        env:
+          IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/go-live-app:${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker push "${IMAGE_URI}"
+
+      - name: Deploy to Cloud Run
+        env:
+          IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/go-live-app:${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gcloud run deploy "${CLOUD_RUN_SERVICE}" \
+            --image "${IMAGE_URI}" \
+            --region "${GCP_REGION}" \
+            --platform managed \
+            --allow-unauthenticated \
+            --set-env-vars "GCS_DATASET_URI=${GCS_DATASET_URI},GO_LIVE_SYNC_FROM_GCS=true,GO_LIVE_DATASET_STORAGE_ROOT=${GO_LIVE_DATASET_STORAGE_ROOT}" \
+            --labels "app=dj-mixing-station,component=go-live,environment=${{ github.event.inputs.deploy_environment }}"
+
+      - name: Print deploy summary
+        env:
+          IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/go-live-app:${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          URL="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format='value(status.url)')"
+          echo "service=${CLOUD_RUN_SERVICE}"
+          echo "image=${IMAGE_URI}"
+          echo "url=${URL}"

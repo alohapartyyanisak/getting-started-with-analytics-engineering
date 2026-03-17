@@ -1,4 +1,5 @@
 cachetools
+gcsfs
 numpy
 pandas
 pyarrow

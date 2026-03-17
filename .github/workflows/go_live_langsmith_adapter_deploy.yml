@@ -1,0 +1,178 @@
+name: go-live-langsmith-adapter-deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Optional image tag override"
+        required: false
+        default: ""
+      deploy_environment:
+        description: "Deploy environment label"
+        required: false
+        default: "staging"
+      secret_source:
+        description: "How adapter runtime secrets are provided to Cloud Run"
+        required: false
+        default: "github_secrets"
+
+concurrency:
+  group: go-live-langsmith-adapter-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GAR_REPOSITORY: ${{ vars.GAR_REPOSITORY }}
+      LANGSMITH_ADAPTER_SERVICE: ${{ vars.LANGSMITH_ADAPTER_SERVICE }}
+      LANGSMITH_PROJECT: ${{ vars.LANGSMITH_PROJECT }}
+      LANGSMITH_API_URL: ${{ vars.LANGSMITH_API_URL }}
+      LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      LANGSMITH_WORKSPACE_ID: ${{ secrets.LANGSMITH_WORKSPACE_ID }}
+      LANGSMITH_ADAPTER_BEARER_TOKEN: ${{ secrets.LANGSMITH_ADAPTER_BEARER_TOKEN }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.inputs.image_tag }}"
+          if [ -z "${TAG}" ]; then
+            TAG="${GITHUB_SHA}"
+          fi
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Auth to Google Cloud (Workload Identity)
+        if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && env.GCP_SERVICE_ACCOUNT != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Auth to Google Cloud (Service Account Key)
+        if: ${{ (env.GCP_WORKLOAD_IDENTITY_PROVIDER == '' || env.GCP_SERVICE_ACCOUNT == '') && env.GCP_SA_KEY != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ env.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Validate deploy settings
+        run: |
+          set -euo pipefail
+          test -n "${GCP_PROJECT_ID}"
+          test -n "${GCP_REGION}"
+          test -n "${GAR_REPOSITORY}"
+          test -n "${LANGSMITH_ADAPTER_SERVICE}"
+          SECRET_SOURCE="${{ github.event.inputs.secret_source }}"
+          case "${SECRET_SOURCE}" in
+            github_secrets)
+              test -n "${LANGSMITH_API_KEY}"
+              test -n "${LANGSMITH_ADAPTER_BEARER_TOKEN}"
+              ;;
+            secret_manager)
+              ;;
+            *)
+              echo "Unsupported secret_source: ${SECRET_SOURCE}" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Configure Docker auth
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build image
+        env:
+          IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/go-live-app:${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker build -t "${IMAGE_URI}" .
+
+      - name: Push image
+        env:
+          IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/go-live-app:${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker push "${IMAGE_URI}"
+
+      - name: Deploy adapter to Cloud Run
+        env:
+          IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/go-live-app:${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          PROJECT_NAME="${LANGSMITH_PROJECT:-go-live-ops}"
+          API_URL="${LANGSMITH_API_URL:-https://api.smith.langchain.com}"
+          SECRET_SOURCE="${{ github.event.inputs.secret_source }}"
+
+          yaml_escape() {
+            printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+          }
+
+          DEPLOY_ARGS=(
+            --image "${IMAGE_URI}"
+            --region "${GCP_REGION}"
+            --platform managed
+            --allow-unauthenticated
+            --command python
+            --args recommendation_app/go-live/code/prod/langsmith_webhook_adapter.py
+            --labels "app=dj-mixing-station,component=langsmith-adapter,environment=${{ github.event.inputs.deploy_environment }}"
+          )
+
+          case "${SECRET_SOURCE}" in
+            github_secrets)
+              ENV_FILE="$(mktemp)"
+              {
+                echo "LANGSMITH_PROJECT: \"$(yaml_escape "${PROJECT_NAME}")\""
+                echo "LANGSMITH_API_URL: \"$(yaml_escape "${API_URL}")\""
+                echo "LANGSMITH_API_KEY: \"$(yaml_escape "${LANGSMITH_API_KEY}")\""
+                echo "LANGSMITH_ADAPTER_BEARER_TOKEN: \"$(yaml_escape "${LANGSMITH_ADAPTER_BEARER_TOKEN}")\""
+                if [ -n "${LANGSMITH_WORKSPACE_ID}" ]; then
+                  echo "LANGSMITH_WORKSPACE_ID: \"$(yaml_escape "${LANGSMITH_WORKSPACE_ID}")\""
+                fi
+              } > "${ENV_FILE}"
+              DEPLOY_ARGS+=(--env-vars-file "${ENV_FILE}")
+              ;;
+            secret_manager)
+              DEPLOY_ARGS+=(--set-env-vars "LANGSMITH_PROJECT=${PROJECT_NAME},LANGSMITH_API_URL=${API_URL}")
+              DEPLOY_ARGS+=(--set-secrets "LANGSMITH_API_KEY=LANGSMITH_API_KEY:latest,LANGSMITH_ADAPTER_BEARER_TOKEN=LANGSMITH_ADAPTER_BEARER_TOKEN:latest")
+              if [ -n "${LANGSMITH_WORKSPACE_ID}" ]; then
+                DEPLOY_ARGS+=(--set-env-vars "LANGSMITH_WORKSPACE_ID=${LANGSMITH_WORKSPACE_ID}")
+              fi
+              ;;
+            *)
+              echo "Unsupported secret_source: ${SECRET_SOURCE}" >&2
+              exit 1
+              ;;
+          esac
+
+          gcloud run deploy "${LANGSMITH_ADAPTER_SERVICE}" "${DEPLOY_ARGS[@]}"
+
+      - name: Print deploy summary
+        env:
+          IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/go-live-app:${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          URL="$(gcloud run services describe "${LANGSMITH_ADAPTER_SERVICE}" --region "${GCP_REGION}" --format='value(status.url)')"
+          echo "service=${LANGSMITH_ADAPTER_SERVICE}"
+          echo "image=${IMAGE_URI}"
+          echo "secret_source=${{ github.event.inputs.secret_source }}"
+          echo "url=${URL}"
