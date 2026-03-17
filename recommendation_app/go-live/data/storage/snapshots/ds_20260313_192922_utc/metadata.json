@@ -3,7 +3,7 @@
   "created_at_utc": "2026-03-13T19:29:22.056377+00:00",
   "row_count": 22470,
   "schema_hash_sha256": "77cbbe045f59d71dc4c20408854a1b423ac6d09ee78e647ae6218e53a93826e3",
-  "prepared_uri": "file:///Users/yanisakk/Documents/GitHub/getting-started-with-analytics-engineering/recommendation_app/go-live/data/storage/snapshots/ds_20260313_192922_utc/prepared.parquet",
+  "prepared_uri": "snapshots/ds_20260313_192922_utc/prepared.parquet",
   "artifacts": {
     "parquet": {
       "path": "/Users/yanisakk/Documents/GitHub/getting-started-with-analytics-engineering/recommendation_app/go-live/data/storage/snapshots/ds_20260313_192922_utc/prepared.parquet",

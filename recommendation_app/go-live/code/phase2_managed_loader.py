@@ -205,6 +205,8 @@ def release_summary(release: DatasetRelease, dataset_root: Path | None = None) -
         artifact_sha = _sha256_uri(release.prepared_uri)
     else:
         artifact = _resolve_artifact_path(release.prepared_uri, root)
+        if not artifact.exists():
+            artifact = _fallback_snapshot_artifact_path(release, root, artifact)
         artifact_path = str(artifact)
         artifact_sha = _sha256_file(artifact)
     return {
