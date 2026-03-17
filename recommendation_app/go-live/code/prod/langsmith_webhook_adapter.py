@@ -127,6 +127,18 @@ def _trimmed_payload(payload: dict[str, Any], keep_keys: list[str]) -> dict[str,
     return out
 
 
+def _dotted_order_segment(start_time: datetime, run_id: str) -> str:
+    return start_time.astimezone(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + run_id
+
+
+def _root_dotted_order(start_time: datetime, run_id: str) -> str:
+    return _dotted_order_segment(start_time, run_id)
+
+
+def _child_dotted_order(parent_dotted_order: str, start_time: datetime, run_id: str) -> str:
+    return f"{parent_dotted_order}.{_dotted_order_segment(start_time, run_id)}"
+
+
 def _scheduler_root_outputs(payload: dict[str, Any]) -> dict[str, Any]:
     pointer_after = payload.get("pointer_after")
     pointer_version = ""
@@ -157,7 +169,12 @@ def _retention_root_outputs(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _scheduler_child_runs(payload: dict[str, Any], root_run_id: str, trace_id: str) -> list[dict[str, Any]]:
+def _scheduler_child_runs(
+    payload: dict[str, Any],
+    root_run_id: str,
+    trace_id: str,
+    root_dotted_order: str,
+) -> list[dict[str, Any]]:
     stages = payload.get("stages")
     if not isinstance(stages, list):
         return []
@@ -172,11 +189,13 @@ def _scheduler_child_runs(payload: dict[str, Any], root_run_id: str, trace_id: s
         status = str(stage.get("status", "") or "").strip()
         details = stage.get("details") if isinstance(stage.get("details"), dict) else {}
         error = str(stage.get("error", "") or "").strip()
+        child_run_id = str(uuid.uuid4())
         child_runs.append(
             {
-                "id": str(uuid.uuid4()),
+                "id": child_run_id,
                 "trace_id": trace_id,
                 "parent_run_id": root_run_id,
+                "dotted_order": _child_dotted_order(root_dotted_order, start_time, child_run_id),
                 "name": f"scheduler:{stage_name}",
                 "run_type": "tool",
                 "session_name": _project_name(),
@@ -205,9 +224,12 @@ def _langsmith_runs_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]
 
     if event == "prod_scheduler_run_result":
         start_time, end_time = _duration_bounds_from_stages(payload)
+        start_dt = _parse_iso(start_time) or _utc_now()
+        root_dotted_order = _root_dotted_order(start_dt, root_run_id)
         root_run = {
             "id": root_run_id,
             "trace_id": trace_id,
+            "dotted_order": root_dotted_order,
             "name": "go-live scheduler",
             "run_type": "chain",
             "session_name": _project_name(),
@@ -229,13 +251,23 @@ def _langsmith_runs_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]
             "error": payload.get("error") if _status_is_error(payload.get("status")) else None,
             "tags": ["go-live", "scheduler", str(payload.get("mode", "") or "").strip() or "unknown"],
         }
-        return [root_run, *_scheduler_child_runs(payload, root_run_id=root_run_id, trace_id=trace_id)]
+        return [
+            root_run,
+            *_scheduler_child_runs(
+                payload,
+                root_run_id=root_run_id,
+                trace_id=trace_id,
+                root_dotted_order=root_dotted_order,
+            ),
+        ]
 
     if event == "prod_retention_run_result":
         now = _utc_now()
+        root_dotted_order = _root_dotted_order(now, root_run_id)
         root_run = {
             "id": root_run_id,
             "trace_id": trace_id,
+            "dotted_order": root_dotted_order,
             "name": "go-live retention",
             "run_type": "chain",
             "session_name": _project_name(),
@@ -269,6 +301,7 @@ def ingest_webhook_payload(payload: dict[str, Any]) -> dict[str, Any]:
             "id": run_id,
             "trace_id": run.get("trace_id"),
             "parent_run_id": run.get("parent_run_id"),
+            "dotted_order": run.get("dotted_order"),
             "name": run["name"],
             "run_type": run["run_type"],
             "session_name": run["session_name"],

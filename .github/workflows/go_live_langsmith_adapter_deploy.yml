@@ -149,9 +149,6 @@ jobs:
                   echo "LANGSMITH_WORKSPACE_ID: \"$(yaml_escape "${LANGSMITH_WORKSPACE_ID}")\""
                 fi
               } > "${ENV_FILE}"
-              if [ -z "${LANGSMITH_WORKSPACE_ID}" ]; then
-                DEPLOY_ARGS+=(--remove-env-vars "LANGSMITH_WORKSPACE_ID")
-              fi
               DEPLOY_ARGS+=(--env-vars-file "${ENV_FILE}")
               ;;
             secret_manager)
@@ -159,8 +156,6 @@ jobs:
               DEPLOY_ARGS+=(--set-secrets "LANGSMITH_API_KEY=LANGSMITH_API_KEY:latest,LANGSMITH_ADAPTER_BEARER_TOKEN=LANGSMITH_ADAPTER_BEARER_TOKEN:latest")
               if [ -n "${LANGSMITH_WORKSPACE_ID}" ]; then
                 DEPLOY_ARGS+=(--set-env-vars "LANGSMITH_WORKSPACE_ID=${LANGSMITH_WORKSPACE_ID}")
-              else
-                DEPLOY_ARGS+=(--remove-env-vars "LANGSMITH_WORKSPACE_ID")
               fi
               ;;
             *)
@@ -170,6 +165,12 @@ jobs:
           esac
 
           gcloud run deploy "${LANGSMITH_ADAPTER_SERVICE}" "${DEPLOY_ARGS[@]}"
+
+          if [ -z "${LANGSMITH_WORKSPACE_ID}" ]; then
+            gcloud run services update "${LANGSMITH_ADAPTER_SERVICE}" \
+              --region "${GCP_REGION}" \
+              --remove-env-vars "LANGSMITH_WORKSPACE_ID"
+          fi
 
       - name: Print deploy summary
         env:
