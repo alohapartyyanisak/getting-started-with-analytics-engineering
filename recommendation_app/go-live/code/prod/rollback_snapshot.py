@@ -59,7 +59,7 @@ def rollback_snapshot(target_version: str | None, steps_back: int, reason: str) 
     payload = {
         "dataset_version": release.version,
         "updated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "metadata_uri": f"file://{release.metadata_path.resolve()}",
+        "metadata_uri": cfg.storage_ref(release.metadata_path, dataset_root),
     }
     _write_json(pointer, payload)
 

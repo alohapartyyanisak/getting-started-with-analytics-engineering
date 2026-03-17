@@ -35,10 +35,6 @@ def _schema_hash(df: pd.DataFrame) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _as_file_uri(path: Path) -> str:
-    return f"file://{path.resolve()}"
-
-
 def _read_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -313,7 +309,7 @@ def incremental_publish(force: bool = False) -> dict[str, Any]:
 
     preferred_local = artifact_paths.get("parquet") or artifact_paths.get("csv")
     assert preferred_local is not None
-    prepared_uri = _as_file_uri(preferred_local)
+    prepared_uri = cfg.storage_ref(preferred_local, dataset_root)
 
     cloud_root = cfg.PRIMARY_ARTIFACT_ROOT_URI
     cloud_uploads: dict[str, dict[str, Any]] = {}
@@ -336,7 +332,7 @@ def incremental_publish(force: bool = False) -> dict[str, Any]:
         "prepared_uri": prepared_uri,
         "artifacts": {
             name: {
-                "path": str(path.resolve()),
+                "path": cfg.storage_ref(path, dataset_root),
                 "sha256": _sha256_file(path),
                 "size_bytes": int(path.stat().st_size),
             }
@@ -369,7 +365,7 @@ def incremental_publish(force: bool = False) -> dict[str, Any]:
     latest_payload = {
         "dataset_version": version,
         "updated_at_utc": now.isoformat(),
-        "metadata_uri": _as_file_uri(metadata_path),
+        "metadata_uri": cfg.storage_ref(metadata_path, dataset_root),
     }
     pointer_bytes = json.dumps(latest_payload, ensure_ascii=False, indent=2).encode("utf-8")
     pointer_path.parent.mkdir(parents=True, exist_ok=True)

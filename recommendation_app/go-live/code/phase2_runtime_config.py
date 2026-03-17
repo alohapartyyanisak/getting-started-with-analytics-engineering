@@ -65,3 +65,12 @@ def dataset_root() -> Path:
             text = text[len("file://") :]
         return Path(text).expanduser()
     return DATASET_STORAGE_ROOT
+
+
+def storage_ref(path: Path, root: Path | None = None) -> str:
+    base = (root or dataset_root()).resolve()
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(base).as_posix()
+    except ValueError:
+        return str(resolved)

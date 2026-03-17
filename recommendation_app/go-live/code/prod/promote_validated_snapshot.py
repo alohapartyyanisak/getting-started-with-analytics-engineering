@@ -58,11 +58,10 @@ def promote_snapshot(candidate_version: str, base_version: str | None, behaviora
         return blocked_payload
 
     release = resolve_release(version=candidate_version, dataset_root=dataset_root)
-    metadata_uri = f"file://{release.metadata_path.resolve()}"
     payload = {
         "dataset_version": release.version,
         "updated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "metadata_uri": metadata_uri,
+        "metadata_uri": cfg.storage_ref(release.metadata_path, dataset_root),
     }
     _write_json(pointer, payload)
     success_payload = {

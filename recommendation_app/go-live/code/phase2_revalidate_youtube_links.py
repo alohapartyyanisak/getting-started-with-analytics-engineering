@@ -14,10 +14,6 @@ import phase2_runtime_config as cfg
 from phase2_managed_loader import load_prepared_dataset, release_summary
 
 
-def _as_file_uri(path: Path) -> str:
-    return f"file://{path.resolve()}"
-
-
 def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -500,10 +496,10 @@ def revalidate_youtube_links(
         "created_at_utc": now.isoformat(),
         "row_count": int(len(df)),
         "schema_hash_sha256": _schema_hash(df),
-        "prepared_uri": _as_file_uri(preferred_artifact),
+        "prepared_uri": cfg.storage_ref(preferred_artifact, dataset_root),
         "artifacts": {
             name: {
-                "path": str(path.resolve()),
+                "path": cfg.storage_ref(path, dataset_root),
                 "sha256": _sha256_file(path),
                 "size_bytes": int(path.stat().st_size),
             }
@@ -529,7 +525,7 @@ def revalidate_youtube_links(
     latest_payload = {
         "dataset_version": version,
         "updated_at_utc": now.isoformat(),
-        "metadata_uri": _as_file_uri(metadata_path),
+        "metadata_uri": cfg.storage_ref(metadata_path, dataset_root),
     }
     pointer_path = dataset_root / cfg.DATASET_POINTER_FILE
     pointer_path.write_text(json.dumps(latest_payload, ensure_ascii=False, indent=2), encoding="utf-8")

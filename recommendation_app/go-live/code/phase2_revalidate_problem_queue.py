@@ -21,10 +21,6 @@ PROBLEM_STATUSES = {
 }
 
 
-def _as_file_uri(path: Path) -> str:
-    return f"file://{path.resolve()}"
-
-
 def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -394,10 +390,10 @@ def revalidate_problem_queue(
         "created_at_utc": now.isoformat(),
         "row_count": int(len(df)),
         "schema_hash_sha256": _schema_hash(df),
-        "prepared_uri": _as_file_uri(preferred_artifact),
+        "prepared_uri": cfg.storage_ref(preferred_artifact, dataset_root),
         "artifacts": {
             name: {
-                "path": str(path.resolve()),
+                "path": cfg.storage_ref(path, dataset_root),
                 "sha256": _sha256_file(path),
                 "size_bytes": int(path.stat().st_size),
             }
@@ -406,15 +402,15 @@ def revalidate_problem_queue(
         "source": {
             "dataset_source": "managed_snapshot_problem_queue_revalidation",
             "parent_dataset_version": current_release.version,
-            "parent_metadata_path": str(current_release.metadata_path.resolve()),
+            "parent_metadata_path": cfg.storage_ref(current_release.metadata_path, dataset_root),
             "parent_release_summary": current_meta,
         },
         "problem_queue_revalidation": summary
         | {
-            "input_report": str(input_report_path.resolve()),
+            "input_report": cfg.storage_ref(input_report_path, dataset_root),
             "input_statuses": sorted(PROBLEM_STATUSES),
-            "report_path": str(audit_path.resolve()),
-            "input_report_carried_forward_path": str(link_report_path.resolve()),
+            "report_path": cfg.storage_ref(audit_path, dataset_root),
+            "input_report_carried_forward_path": cfg.storage_ref(link_report_path, dataset_root),
             "resolver_module": "go-live/code/test/application_phase2.py",
             "selection_mode": "tightened_scorer_plus_runtime_playability",
         },
@@ -426,7 +422,7 @@ def revalidate_problem_queue(
     latest_payload = {
         "dataset_version": version,
         "updated_at_utc": now.isoformat(),
-        "metadata_uri": _as_file_uri(metadata_path),
+        "metadata_uri": cfg.storage_ref(metadata_path, dataset_root),
     }
     pointer_path = dataset_root / cfg.DATASET_POINTER_FILE
     pointer_path.write_text(json.dumps(latest_payload, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -29,10 +29,6 @@ def _sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
-def _as_file_uri(path: Path) -> str:
-    return f"file://{path.resolve()}"
-
-
 def publish_dataset() -> dict[str, Any]:
     offline_code_dir = cfg.OFFLINE_V2_CODE_DIR
     if str(offline_code_dir) not in sys.path:
@@ -79,10 +75,10 @@ def publish_dataset() -> dict[str, Any]:
         "created_at_utc": now.isoformat(),
         "row_count": int(len(prepared_df)),
         "schema_hash_sha256": _schema_hash(prepared_df),
-        "prepared_uri": _as_file_uri(preferred_artifact),
+        "prepared_uri": cfg.storage_ref(preferred_artifact, dataset_root),
         "artifacts": {
             name: {
-                "path": str(path.resolve()),
+                "path": cfg.storage_ref(path, dataset_root),
                 "sha256": _sha256_file(path),
                 "size_bytes": int(path.stat().st_size),
             }
@@ -103,7 +99,7 @@ def publish_dataset() -> dict[str, Any]:
     latest_payload = {
         "dataset_version": version,
         "updated_at_utc": now.isoformat(),
-        "metadata_uri": _as_file_uri(metadata_path),
+        "metadata_uri": cfg.storage_ref(metadata_path, dataset_root),
     }
     pointer_path = dataset_root / cfg.DATASET_POINTER_FILE
     pointer_path.parent.mkdir(parents=True, exist_ok=True)
