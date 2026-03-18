@@ -6,7 +6,7 @@ if (!APP_URL) {
   process.exit(2);
 }
 
-const ARTISTS = String(process.env.SMOKE_ARTISTS || 'j-hope|TWICE')
+const ARTISTS = String(process.env.SMOKE_ARTISTS || 'Ed Sheeran|Bruno Mars')
   .split('|')
   .map((s) => s.trim())
   .filter(Boolean);
@@ -139,6 +139,14 @@ async function switchToArtistMode(page) {
 }
 
 async function chooseArtist(page, artistName) {
+  const quickChip = page.getByRole('button', { name: artistName }).first();
+  if (await quickChip.isVisible().catch(() => false)) {
+    await quickChip.click({ force: true });
+    const expectedChip = page.getByText(`Artist: ${artistName}`, { exact: false }).first();
+    await expectedChip.waitFor({ state: 'visible', timeout: 15000 });
+    return;
+  }
+
   const input = page.getByPlaceholder('Search and select artists').first();
   await input.click();
   await input.fill(artistName);
