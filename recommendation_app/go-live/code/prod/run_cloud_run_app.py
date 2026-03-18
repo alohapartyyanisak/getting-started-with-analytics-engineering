@@ -1,0 +1,38 @@
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+CODE_ROOT = Path(__file__).resolve().parent.parent
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+
+from prod.langsmith_app_tracing import emit_app_boot_trace
+from prod.sync_storage_from_gcs import main as sync_storage_main
+
+
+def main() -> int:
+    sync_rc = sync_storage_main()
+    if sync_rc != 0:
+        return int(sync_rc)
+
+    emit_app_boot_trace()
+
+    port = str(os.getenv("PORT", "8080") or "8080").strip() or "8080"
+    cmd = [
+        "streamlit",
+        "run",
+        "recommendation_app/go-live/code/application_phase2.py",
+        "--server.address=0.0.0.0",
+        f"--server.port={port}",
+        "--server.headless=true",
+        "--browser.gatherUsageStats=false",
+        "--server.fileWatcherType=none",
+    ]
+    return subprocess.call(cmd)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

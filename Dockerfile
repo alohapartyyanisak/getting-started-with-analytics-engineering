@@ -21,4 +21,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD python recommendation_app/go-live/code/phase2_health_check.py >/tmp/phase2_health.json || exit 1
 
-CMD ["sh", "-c", "python recommendation_app/go-live/code/prod/sync_storage_from_gcs.py && streamlit run recommendation_app/go-live/code/application_phase2.py --server.address=0.0.0.0 --server.port=${PORT:-8080} --server.headless=true --browser.gatherUsageStats=false --server.fileWatcherType=none"]
+CMD ["python", "recommendation_app/go-live/code/prod/run_cloud_run_app.py"]

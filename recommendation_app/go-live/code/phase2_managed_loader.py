@@ -11,6 +11,11 @@ import pandas as pd
 
 import phase2_runtime_config as cfg
 
+try:
+    from prod.langsmith_app_tracing import emit_dataset_load_trace
+except Exception:  # pragma: no cover
+    emit_dataset_load_trace = None
+
 
 REQUIRED_PREPARED_COLUMNS = {
     "artist",
@@ -195,6 +200,12 @@ def load_prepared_dataset(version: str | None = None, dataset_root: Path | None 
             raise ValueError(f"Unsupported artifact extension for {artifact}")
 
     validate_prepared_dataset(df, expected_schema_hash=release.schema_hash_sha256)
+    if emit_dataset_load_trace is not None:
+        emit_dataset_load_trace(
+            dataset_version=release.version,
+            row_count=len(df),
+            prepared_uri=release.prepared_uri,
+        )
     return df, release
 
 
