@@ -81,7 +81,7 @@ jobs:
           test -n "${CLOUD_RUN_SERVICE}"
           test -n "${GCS_DATASET_URI}"
           if [ -z "${CLOUD_RUN_MEMORY}" ]; then
-            CLOUD_RUN_MEMORY="1Gi"
+            CLOUD_RUN_MEMORY="2Gi"
           fi
           if [ -z "${CLOUD_RUN_CONCURRENCY}" ]; then
             CLOUD_RUN_CONCURRENCY="1"
@@ -128,7 +128,7 @@ jobs:
             --platform managed \
             --allow-unauthenticated \
             --service-account "${GCP_SERVICE_ACCOUNT}" \
-            --memory "${CLOUD_RUN_MEMORY:-1Gi}" \
+            --memory "${CLOUD_RUN_MEMORY:-2Gi}" \
             --concurrency "${CLOUD_RUN_CONCURRENCY:-1}" \
             --session-affinity \
             --env-vars-file "${ENV_FILE}" \
