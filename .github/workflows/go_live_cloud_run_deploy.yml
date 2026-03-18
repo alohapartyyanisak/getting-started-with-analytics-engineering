@@ -130,16 +130,37 @@ jobs:
             --service-account "${GCP_SERVICE_ACCOUNT}" \
             --memory "${CLOUD_RUN_MEMORY:-2Gi}" \
             --concurrency "${CLOUD_RUN_CONCURRENCY:-1}" \
+            --cpu-boost \
             --session-affinity \
             --env-vars-file "${ENV_FILE}" \
             --labels "app=dj-mixing-station,component=go-live,environment=${{ github.event.inputs.deploy_environment }}"
 
-      - name: Print deploy summary
+      - name: Capture deploy summary
+        id: deploy_summary
         env:
           IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/go-live-app:${{ steps.meta.outputs.tag }}
         run: |
           set -euo pipefail
           URL="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format='value(status.url)')"
+          REVISION="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format='value(status.latestReadyRevisionName)')"
+          MEMORY="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format='value(spec.template.spec.containers[0].resources.limits.memory)')"
+          CONCURRENCY="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format='value(spec.template.spec.containerConcurrency)')"
+          SESSION_AFFINITY="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format='value(spec.template.metadata.annotations.run.googleapis.com/sessionAffinity)')"
+          echo "url=${URL}" >> "${GITHUB_OUTPUT}"
+          echo "revision=${REVISION}" >> "${GITHUB_OUTPUT}"
           echo "service=${CLOUD_RUN_SERVICE}"
           echo "image=${IMAGE_URI}"
           echo "url=${URL}"
+          echo "revision=${REVISION}"
+          echo "memory=${MEMORY}"
+          echo "concurrency=${CONCURRENCY}"
+          echo "session_affinity=${SESSION_AFFINITY}"
+
+      - name: Run hosted smoke check
+        run: |
+          set -euo pipefail
+          python recommendation_app/go-live/code/prod/cloud_run_smoke_check.py \
+            --base-url "${{ steps.deploy_summary.outputs.url }}" \
+            --attempts 18 \
+            --sleep-seconds 5 \
+            --timeout-seconds 20
