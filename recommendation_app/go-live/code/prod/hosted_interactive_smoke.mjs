@@ -7,6 +7,23 @@ if (!APP_URL) {
 }
 
 const ARTISTS = String(process.env.SMOKE_ARTISTS || 'j-hope|TWICE').split('|').map((s) => s.trim()).filter(Boolean);
+const eventLog = {
+  console: [],
+  page_errors: [],
+  request_failures: [],
+};
+
+async function waitForAppReady(page) {
+  await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+  try {
+    await page.getByText('Self Mix', { exact: true }).waitFor({ state: 'visible', timeout: 45000 });
+    return;
+  } catch (_firstError) {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await page.getByText('Self Mix', { exact: true }).waitFor({ state: 'visible', timeout: 45000 });
+  }
+}
 
 async function chooseArtist(page, artistName) {
   const input = page.getByPlaceholder('Search and select artists').first();
@@ -22,8 +39,23 @@ async function chooseArtist(page, artistName) {
 }
 
 const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext();
+const context = await browser.newContext({ viewport: { width: 1600, height: 2000 } });
 const page = await context.newPage();
+page.on('console', (msg) => {
+  if (eventLog.console.length < 20) {
+    eventLog.console.push(`${msg.type()}: ${msg.text()}`);
+  }
+});
+page.on('pageerror', (error) => {
+  if (eventLog.page_errors.length < 20) {
+    eventLog.page_errors.push(String(error?.message || error));
+  }
+});
+page.on('requestfailed', (request) => {
+  if (eventLog.request_failures.length < 20) {
+    eventLog.request_failures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText || 'failed'}`);
+  }
+});
 
 const result = {
   status: 'fail',
@@ -34,7 +66,7 @@ const result = {
 
 try {
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
-  await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 45000 });
+  await waitForAppReady(page);
   result.checks.page_loaded = true;
 
   await page.getByText('Self Mix', { exact: true }).click();
@@ -63,6 +95,7 @@ try {
   process.exit(0);
 } catch (error) {
   result.error = String(error?.message || error);
+  result.events = eventLog;
   const screenshotPath = 'recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_failure.png';
   await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
   result.screenshot_path = screenshotPath;
