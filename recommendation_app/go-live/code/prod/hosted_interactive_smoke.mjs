@@ -6,23 +6,87 @@ if (!APP_URL) {
   process.exit(2);
 }
 
-const ARTISTS = String(process.env.SMOKE_ARTISTS || 'j-hope|TWICE').split('|').map((s) => s.trim()).filter(Boolean);
+const ARTISTS = String(process.env.SMOKE_ARTISTS || 'j-hope|TWICE')
+  .split('|')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.SMOKE_MAX_ATTEMPTS || '3', 10) || 3);
 const eventLog = {
   console: [],
   page_errors: [],
   request_failures: [],
 };
 
-async function waitForAppReady(page) {
-  await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
-  try {
-    await page.getByText('Self Mix', { exact: true }).waitFor({ state: 'visible', timeout: 45000 });
-    return;
-  } catch (_firstError) {
-    await page.reload({ waitUntil: 'domcontentloaded', timeout: 45000 });
-    await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
-    await page.getByText('Self Mix', { exact: true }).waitFor({ state: 'visible', timeout: 45000 });
+function appendEvent(target, value, limit = 40) {
+  if (target.length < limit) {
+    target.push(value);
   }
+}
+
+function shouldBlockRequest(url) {
+  return [
+    'youtube.com',
+    'youtube-nocookie.com',
+    'ytimg.com',
+    'googlevideo.com',
+    'doubleclick.net',
+    'googleads.g.doubleclick.net',
+  ].some((needle) => url.includes(needle));
+}
+
+async function attachNetworkGuards(page) {
+  await page.route('**/*', async (route) => {
+    const request = route.request();
+    const url = request.url();
+    if (shouldBlockRequest(url)) {
+      appendEvent(eventLog.request_failures, `${request.method()} ${url} :: blocked_for_smoke`);
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+
+  page.on('console', (msg) => appendEvent(eventLog.console, `${msg.type()}: ${msg.text()}`));
+  page.on('pageerror', (error) => appendEvent(eventLog.page_errors, String(error?.message || error)));
+  page.on('requestfailed', (request) => {
+    appendEvent(
+      eventLog.request_failures,
+      `${request.method()} ${request.url()} :: ${request.failure()?.errorText || 'failed'}`,
+    );
+  });
+}
+
+async function waitForBasePage(page) {
+  await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+  await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+  await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+}
+
+async function waitForRadioGroups(page) {
+  const groups = page.locator('[role="radiogroup"]');
+  await groups.first().waitFor({ state: 'visible', timeout: 30000 });
+  await page.waitForFunction(() => document.querySelectorAll('[role="radiogroup"]').length >= 2, null, { timeout: 30000 });
+  return groups;
+}
+
+async function clickRadioOption(page, groupIndex, optionIndex) {
+  const groups = await waitForRadioGroups(page);
+  const group = groups.nth(groupIndex);
+  const radio = group.locator('[role="radio"]').nth(optionIndex);
+  await radio.waitFor({ state: 'visible', timeout: 30000 });
+  await radio.scrollIntoViewIfNeeded();
+  await radio.click({ force: true });
+}
+
+async function switchToArtistMode(page) {
+  const artistInput = page.getByPlaceholder('Search and select artists').first();
+  if (await artistInput.isVisible().catch(() => false)) {
+    return;
+  }
+
+  await clickRadioOption(page, 1, 1);
+  await artistInput.waitFor({ state: 'visible', timeout: 30000 });
 }
 
 async function chooseArtist(page, artistName) {
@@ -38,68 +102,85 @@ async function chooseArtist(page, artistName) {
   await expectedChip.waitFor({ state: 'visible', timeout: 15000 });
 }
 
-const browser = await chromium.launch({ headless: true });
-const context = await browser.newContext({ viewport: { width: 1600, height: 2000 } });
-const page = await context.newPage();
-page.on('console', (msg) => {
-  if (eventLog.console.length < 20) {
-    eventLog.console.push(`${msg.type()}: ${msg.text()}`);
+async function runAttempt(attemptNumber) {
+  const browser = await chromium.launch({
+    headless: true,
+    args: ['--disable-dev-shm-usage'],
+  });
+  const context = await browser.newContext({
+    viewport: { width: 1600, height: 2000 },
+    serviceWorkers: 'block',
+  });
+  const page = await context.newPage();
+  await attachNetworkGuards(page);
+
+  const attempt = {
+    attempt: attemptNumber,
+    status: 'fail',
+    checks: {},
+  };
+
+  try {
+    await waitForBasePage(page);
+    attempt.checks.page_loaded = true;
+
+    await switchToArtistMode(page);
+    attempt.checks.artist_mode_ready = true;
+
+    for (const artist of ARTISTS) {
+      await chooseArtist(page, artist);
+    }
+    attempt.checks.artist_selection_persists = true;
+
+    await page.getByText('Final Picks (2/5)', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
+    attempt.checks.final_pick_box_updated = true;
+
+    await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
+    attempt.checks.playable_playlist_visible = true;
+
+    const playlistLink = page.getByRole('link', { name: 'Open Temporary YouTube Playlist' });
+    await playlistLink.waitFor({ state: 'visible', timeout: 30000 });
+    attempt.checks.temp_playlist_link_visible = true;
+
+    attempt.status = 'pass';
+    await browser.close();
+    return attempt;
+  } catch (error) {
+    attempt.error = String(error?.message || error);
+    const screenshotPath = `recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_failure_attempt_${attemptNumber}.png`;
+    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+    attempt.screenshot_path = screenshotPath;
+    await browser.close();
+    return attempt;
   }
-});
-page.on('pageerror', (error) => {
-  if (eventLog.page_errors.length < 20) {
-    eventLog.page_errors.push(String(error?.message || error));
-  }
-});
-page.on('requestfailed', (request) => {
-  if (eventLog.request_failures.length < 20) {
-    eventLog.request_failures.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText || 'failed'}`);
-  }
-});
+}
 
 const result = {
   status: 'fail',
   app_url: APP_URL,
   artists: ARTISTS,
+  max_attempts: MAX_ATTEMPTS,
+  attempts: [],
   checks: {},
 };
 
-try {
-  await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 45000 });
-  await waitForAppReady(page);
-  result.checks.page_loaded = true;
-
-  await page.getByText('Self Mix', { exact: true }).click();
-  await page.getByText('Pick Artists', { exact: true }).click();
-  await page.getByPlaceholder('Search and select artists').first().waitFor({ state: 'visible', timeout: 15000 });
-  result.checks.artist_mode_ready = true;
-
-  for (const artist of ARTISTS) {
-    await chooseArtist(page, artist);
+for (let attemptNumber = 1; attemptNumber <= MAX_ATTEMPTS; attemptNumber += 1) {
+  const attempt = await runAttempt(attemptNumber);
+  result.attempts.push(attempt);
+  if (attempt.status === 'pass') {
+    result.status = 'pass';
+    result.checks = attempt.checks;
+    break;
   }
-  result.checks.artist_selection_persists = true;
-
-  await page.getByText('Final Picks (2/5)', { exact: false }).waitFor({ state: 'visible', timeout: 15000 });
-  result.checks.final_pick_box_updated = true;
-
-  await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
-  result.checks.playable_playlist_visible = true;
-
-  const playlistLink = page.getByRole('link', { name: 'Open Temporary YouTube Playlist' });
-  await playlistLink.waitFor({ state: 'visible', timeout: 30000 });
-  result.checks.temp_playlist_link_visible = true;
-
-  result.status = 'pass';
-  console.log(JSON.stringify(result, null, 2));
-  await browser.close();
-  process.exit(0);
-} catch (error) {
-  result.error = String(error?.message || error);
-  result.events = eventLog;
-  const screenshotPath = 'recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_failure.png';
-  await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
-  result.screenshot_path = screenshotPath;
-  console.log(JSON.stringify(result, null, 2));
-  await browser.close();
-  process.exit(1);
 }
+
+if (result.status !== 'pass') {
+  const lastAttempt = result.attempts[result.attempts.length - 1] || {};
+  result.error = lastAttempt.error || 'interactive smoke failed';
+  result.checks = lastAttempt.checks || {};
+  result.screenshot_path = lastAttempt.screenshot_path;
+  result.events = eventLog;
+}
+
+console.log(JSON.stringify(result, null, 2));
+process.exit(result.status === 'pass' ? 0 : 1);

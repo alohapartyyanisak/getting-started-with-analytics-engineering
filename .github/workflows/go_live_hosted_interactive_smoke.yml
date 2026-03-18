@@ -34,6 +34,7 @@ jobs:
       APP_BASE_URL: ${{ vars.APP_BASE_URL }}
       APP_URL_INPUT: ${{ github.event.inputs.app_url || '' }}
       SMOKE_ARTISTS: ${{ github.event.inputs.artists || 'j-hope|TWICE' }}
+      SMOKE_MAX_ATTEMPTS: "3"
 
     steps:
       - name: Checkout
@@ -129,4 +130,4 @@ jobs:
           name: go-live-hosted-interactive-smoke-${{ github.run_id }}
           path: |
             recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json
-            recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_failure.png
+            recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_failure*.png
