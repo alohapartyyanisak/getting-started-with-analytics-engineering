@@ -1,0 +1,128 @@
+name: go-live-hosted-interactive-smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_url:
+        description: "Optional app URL override; blank resolves from Cloud Run service"
+        required: false
+        default: ""
+      artists:
+        description: "Pipe-delimited artist seeds to add during smoke"
+        required: false
+        default: "j-hope|TWICE"
+
+concurrency:
+  group: go-live-hosted-interactive-smoke
+  cancel-in-progress: false
+
+jobs:
+  run-hosted-interactive-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      APP_URL_INPUT: ${{ github.event.inputs.app_url || '' }}
+      SMOKE_ARTISTS: ${{ github.event.inputs.artists || 'j-hope|TWICE' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Auth to Google Cloud (Workload Identity)
+        if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && env.GCP_SERVICE_ACCOUNT != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Auth to Google Cloud (Service Account Key)
+        if: ${{ (env.GCP_WORKLOAD_IDENTITY_PROVIDER == '' || env.GCP_SERVICE_ACCOUNT == '') && env.GCP_SA_KEY != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ env.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Resolve app URL
+        id: resolve_url
+        run: |
+          set -euo pipefail
+          APP_URL="${APP_URL_INPUT}"
+          if [ -z "${APP_URL}" ]; then
+            test -n "${GCP_REGION}"
+            test -n "${CLOUD_RUN_SERVICE}"
+            APP_URL="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format='value(status.url)')"
+          fi
+          test -n "${APP_URL}"
+          echo "app_url=${APP_URL}" >> "${GITHUB_OUTPUT}"
+          echo "app_url=${APP_URL}"
+
+      - name: Install Playwright
+        run: |
+          set -euo pipefail
+          npm init -y >/dev/null 2>&1
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      - name: Run hosted interactive smoke
+        env:
+          APP_URL: ${{ steps.resolve_url.outputs.app_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p recommendation_app/go-live/code/prod/.artifacts
+          node recommendation_app/go-live/code/prod/hosted_interactive_smoke.mjs | tee recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json
+
+      - name: Print hosted interactive smoke summary
+        if: always()
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          const path = 'recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json';
+          if (!fs.existsSync(path)) {
+            console.log('hosted_interactive_smoke_result.json is missing');
+            process.exit(0);
+          }
+          const text = fs.readFileSync(path, 'utf8');
+          const idx = text.indexOf('{');
+          if (idx < 0) {
+            console.log('No JSON payload found');
+            process.exit(0);
+          }
+          const payload = JSON.parse(text.slice(idx));
+          console.log('status=', payload.status);
+          console.log('app_url=', payload.app_url);
+          console.log('artists=', (payload.artists || []).join(', '));
+          console.log('page_loaded=', payload.checks?.page_loaded);
+          console.log('artist_mode_ready=', payload.checks?.artist_mode_ready);
+          console.log('artist_selection_persists=', payload.checks?.artist_selection_persists);
+          console.log('final_pick_box_updated=', payload.checks?.final_pick_box_updated);
+          console.log('playable_playlist_visible=', payload.checks?.playable_playlist_visible);
+          console.log('temp_playlist_link_visible=', payload.checks?.temp_playlist_link_visible);
+          JS
+
+      - name: Upload workflow artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-live-hosted-interactive-smoke-${{ github.run_id }}
+          path: |
+            recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json
+            recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_failure.png
