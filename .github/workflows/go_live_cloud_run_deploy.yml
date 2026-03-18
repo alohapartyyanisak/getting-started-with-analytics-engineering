@@ -32,6 +32,7 @@ jobs:
       GCP_REGION: ${{ vars.GCP_REGION }}
       GAR_REPOSITORY: ${{ vars.GAR_REPOSITORY }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      APP_BASE_URL: ${{ vars.APP_BASE_URL }}
       CLOUD_RUN_MEMORY: ${{ vars.CLOUD_RUN_MEMORY }}
       CLOUD_RUN_CONCURRENCY: ${{ vars.CLOUD_RUN_CONCURRENCY }}
       GCS_DATASET_URI: ${{ secrets.GCS_DATASET_URI }}
@@ -148,11 +149,17 @@ jobs:
           MEMORY="$(jq -r '.spec.template.spec.containers[0].resources.limits.memory // ""' "${SERVICE_JSON}")"
           CONCURRENCY="$(jq -r '.spec.template.spec.containerConcurrency // ""' "${SERVICE_JSON}")"
           SESSION_AFFINITY="$(jq -r '.spec.template.metadata.annotations["run.googleapis.com/sessionAffinity"] // ""' "${SERVICE_JSON}")"
+          PUBLIC_URL="${APP_BASE_URL}"
+          if [ -z "${PUBLIC_URL}" ]; then
+            PUBLIC_URL="${URL}"
+          fi
           echo "url=${URL}" >> "${GITHUB_OUTPUT}"
+          echo "public_url=${PUBLIC_URL}" >> "${GITHUB_OUTPUT}"
           echo "revision=${REVISION}" >> "${GITHUB_OUTPUT}"
           echo "service=${CLOUD_RUN_SERVICE}"
           echo "image=${IMAGE_URI}"
           echo "url=${URL}"
+          echo "public_url=${PUBLIC_URL}"
           echo "revision=${REVISION}"
           echo "memory=${MEMORY}"
           echo "concurrency=${CONCURRENCY}"
@@ -162,7 +169,7 @@ jobs:
         run: |
           set -euo pipefail
           python recommendation_app/go-live/code/prod/cloud_run_smoke_check.py \
-            --base-url "${{ steps.deploy_summary.outputs.url }}" \
+            --base-url "${{ steps.deploy_summary.outputs.public_url }}" \
             --attempts 18 \
             --sleep-seconds 5 \
             --timeout-seconds 20

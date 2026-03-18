@@ -31,6 +31,7 @@ jobs:
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      APP_BASE_URL: ${{ vars.APP_BASE_URL }}
       APP_URL_INPUT: ${{ github.event.inputs.app_url || '' }}
       SMOKE_ARTISTS: ${{ github.event.inputs.artists || 'j-hope|TWICE' }}
 
@@ -66,6 +67,9 @@ jobs:
         run: |
           set -euo pipefail
           APP_URL="${APP_URL_INPUT}"
+          if [ -z "${APP_URL}" ]; then
+            APP_URL="${APP_BASE_URL}"
+          fi
           if [ -z "${APP_URL}" ]; then
             test -n "${GCP_REGION}"
             test -n "${CLOUD_RUN_SERVICE}"
