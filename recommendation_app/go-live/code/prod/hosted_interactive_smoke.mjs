@@ -81,32 +81,46 @@ async function waitForRadioGroups(page) {
   throw new Error('Could not find two radio groups on the page');
 }
 
-async function clickRadioOption(page, groupIndex, optionIndex) {
-  const groups = await waitForRadioGroups(page);
-  const group = groups.nth(groupIndex);
-
-  const optionLocators = [
-    group.locator('label[data-baseweb="radio"]').nth(optionIndex),
-    group.locator('[role="radio"]').nth(optionIndex),
-    group.locator('input[type="radio"]').nth(optionIndex),
+async function clickRadioLabel(page, labelText) {
+  const locators = [
+    page.locator('label[data-baseweb="radio"]').filter({ hasText: labelText }).first(),
+    page.getByText(labelText, { exact: true }).first(),
   ];
 
-  for (const radio of optionLocators) {
-    const count = await radio.count();
+  for (const locator of locators) {
+    const count = await locator.count();
     if (count < 1) {
       continue;
     }
-    await radio.waitFor({ state: 'visible', timeout: 30000 }).catch(() => null);
-    await radio.scrollIntoViewIfNeeded().catch(() => null);
+    await locator.waitFor({ state: 'visible', timeout: 30000 }).catch(() => null);
+    await locator.scrollIntoViewIfNeeded().catch(() => null);
     try {
-      await radio.click({ force: true });
+      await locator.click({ force: true });
       return;
     } catch (_error) {
       continue;
     }
   }
 
-  throw new Error(`Could not find clickable radio option groupIndex=${groupIndex} optionIndex=${optionIndex}`);
+  throw new Error(`Could not click radio label ${labelText}`);
+}
+
+async function waitForLabelSelection(page, labelText) {
+  await page.waitForFunction(
+    (targetText) => {
+      const labels = Array.from(document.querySelectorAll('label[data-baseweb="radio"]'));
+      return labels.some((label) => {
+        const text = (label.textContent || '').trim();
+        if (!text.includes(targetText)) {
+          return false;
+        }
+        const input = label.querySelector('input[type="radio"]');
+        return Boolean(input && input.checked);
+      });
+    },
+    labelText,
+    { timeout: 30000 },
+  );
 }
 
 async function switchToArtistMode(page) {
@@ -115,7 +129,12 @@ async function switchToArtistMode(page) {
     return;
   }
 
-  await clickRadioOption(page, 1, 1);
+  await waitForRadioGroups(page);
+  await clickRadioLabel(page, 'Self Mix');
+  await waitForLabelSelection(page, 'Self Mix').catch(() => null);
+  await clickRadioLabel(page, 'Pick Artists');
+  await waitForLabelSelection(page, 'Pick Artists').catch(() => null);
+  await page.waitForTimeout(1500);
   await artistInput.waitFor({ state: 'visible', timeout: 30000 });
 }
 
@@ -160,6 +179,12 @@ async function runAttempt(attemptNumber) {
       basewebRadioCount: document.querySelectorAll('label[data-baseweb="radio"]').length,
       ariaRadioCount: document.querySelectorAll('[role="radio"]').length,
       inputRadioCount: document.querySelectorAll('input[type="radio"]').length,
+      radioLabels: Array.from(document.querySelectorAll('label[data-baseweb="radio"]'))
+        .slice(0, 12)
+        .map((label) => ({
+          text: (label.textContent || '').trim(),
+          checked: Boolean(label.querySelector('input[type="radio"]')?.checked),
+        })),
     }));
 
     await switchToArtistMode(page);

@@ -129,3 +129,4 @@ jobs:
         with:
           name: go-live-hosted-interactive-smoke-${{ github.run_id }}
           path: recommendation_app/go-live/code/prod/.artifacts/
+          include-hidden-files: true
