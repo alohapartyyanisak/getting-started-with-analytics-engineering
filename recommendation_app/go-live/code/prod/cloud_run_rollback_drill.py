@@ -16,7 +16,12 @@ from prod.cloud_run_smoke_check import run_smoke
 
 
 def _run_cmd(args: list[str]) -> str:
-    completed = subprocess.run(args, check=True, capture_output=True, text=True)
+    try:
+        completed = subprocess.run(args, check=True, capture_output=True, text=True)
+    except FileNotFoundError as exc:
+        if args and args[0] == "gcloud":
+            raise RuntimeError("gcloud is required on PATH for the Cloud Run rollback drill") from exc
+        raise
     return completed.stdout
 
 
@@ -38,12 +43,50 @@ def _service_url(payload: dict[str, Any]) -> str:
     return str(((payload.get("status") or {}).get("url") or "")).strip()
 
 
+def _revision_names(payload: Any) -> list[str]:
+    if isinstance(payload, list):
+        items = payload
+    elif isinstance(payload, dict):
+        items = payload.get("items") or []
+    else:
+        items = []
+    names: list[str] = []
+    for item in items:
+        name = str(((item.get("metadata") or {}).get("name") or "")).strip()
+        if name:
+            names.append(name)
+    return names
+
+
 def _current_live_revision(payload: dict[str, Any]) -> str:
     traffic = (payload.get("status") or {}).get("traffic") or []
     for item in traffic:
         if int(item.get("percent", 0) or 0) == 100:
             return str(item.get("revisionName") or "").strip()
     return str(((payload.get("status") or {}).get("latestReadyRevisionName") or "")).strip()
+
+
+def _list_revisions(service: str, region: str) -> list[str]:
+    payload = _run_cmd([
+        "gcloud",
+        "run",
+        "revisions",
+        "list",
+        "--service",
+        service,
+        "--region",
+        region,
+        "--format=json",
+    ])
+    return _revision_names(json.loads(payload))
+
+
+def _select_prior_revision(service: str, region: str, current_live_revision: str) -> str:
+    revisions = _list_revisions(service, region)
+    for name in revisions:
+        if name != current_live_revision:
+            return name
+    raise ValueError("No prior revision available for rollback drill")
 
 
 def _switch_traffic(service: str, region: str, revision: str) -> None:
@@ -77,7 +120,7 @@ def run_cloud_run_rollback_drill(
     if not restore_revision:
         raise ValueError("Could not determine current live revision")
     if not rollback_revision:
-        raise ValueError("rollback_revision is required")
+        rollback_revision = _select_prior_revision(service, region, restore_revision)
     if rollback_revision == restore_revision:
         raise ValueError("rollback_revision must differ from current live revision")
 
@@ -132,7 +175,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run a Cloud Run rollback drill and restore traffic")
     parser.add_argument("--service", required=True)
     parser.add_argument("--region", required=True)
-    parser.add_argument("--rollback-revision", required=True)
+    parser.add_argument("--rollback-revision", default="")
     parser.add_argument("--attempts", type=int, default=18)
     parser.add_argument("--sleep-seconds", type=int, default=5)
     parser.add_argument("--timeout-seconds", type=int, default=20)
