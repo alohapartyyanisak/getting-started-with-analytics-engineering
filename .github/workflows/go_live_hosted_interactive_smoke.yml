@@ -128,6 +128,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: go-live-hosted-interactive-smoke-${{ github.run_id }}
-          path: |
-            recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json
-            recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_failure*.png
+          path: recommendation_app/go-live/code/prod/.artifacts/

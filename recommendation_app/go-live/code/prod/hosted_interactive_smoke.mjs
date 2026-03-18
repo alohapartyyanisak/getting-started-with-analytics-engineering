@@ -64,19 +64,49 @@ async function waitForBasePage(page) {
 }
 
 async function waitForRadioGroups(page) {
-  const groups = page.locator('[role="radiogroup"]');
-  await groups.first().waitFor({ state: 'visible', timeout: 30000 });
-  await page.waitForFunction(() => document.querySelectorAll('[role="radiogroup"]').length >= 2, null, { timeout: 30000 });
-  return groups;
+  const groupSelectors = [
+    'div[data-testid="stRadio"]',
+    '[role="radiogroup"]',
+  ];
+
+  for (const selector of groupSelectors) {
+    const groups = page.locator(selector);
+    const count = await groups.count();
+    if (count >= 2) {
+      await groups.first().waitFor({ state: 'visible', timeout: 30000 });
+      return groups;
+    }
+  }
+
+  throw new Error('Could not find two radio groups on the page');
 }
 
 async function clickRadioOption(page, groupIndex, optionIndex) {
   const groups = await waitForRadioGroups(page);
   const group = groups.nth(groupIndex);
-  const radio = group.locator('[role="radio"]').nth(optionIndex);
-  await radio.waitFor({ state: 'visible', timeout: 30000 });
-  await radio.scrollIntoViewIfNeeded();
-  await radio.click({ force: true });
+
+  const optionLocators = [
+    group.locator('label[data-baseweb="radio"]').nth(optionIndex),
+    group.locator('[role="radio"]').nth(optionIndex),
+    group.locator('input[type="radio"]').nth(optionIndex),
+  ];
+
+  for (const radio of optionLocators) {
+    const count = await radio.count();
+    if (count < 1) {
+      continue;
+    }
+    await radio.waitFor({ state: 'visible', timeout: 30000 }).catch(() => null);
+    await radio.scrollIntoViewIfNeeded().catch(() => null);
+    try {
+      await radio.click({ force: true });
+      return;
+    } catch (_error) {
+      continue;
+    }
+  }
+
+  throw new Error(`Could not find clickable radio option groupIndex=${groupIndex} optionIndex=${optionIndex}`);
 }
 
 async function switchToArtistMode(page) {
@@ -118,11 +148,19 @@ async function runAttempt(attemptNumber) {
     attempt: attemptNumber,
     status: 'fail',
     checks: {},
+    dom_debug: {},
   };
 
   try {
     await waitForBasePage(page);
     attempt.checks.page_loaded = true;
+    attempt.dom_debug = await page.evaluate(() => ({
+      stRadioCount: document.querySelectorAll('div[data-testid="stRadio"]').length,
+      ariaRadioGroupCount: document.querySelectorAll('[role="radiogroup"]').length,
+      basewebRadioCount: document.querySelectorAll('label[data-baseweb="radio"]').length,
+      ariaRadioCount: document.querySelectorAll('[role="radio"]').length,
+      inputRadioCount: document.querySelectorAll('input[type="radio"]').length,
+    }));
 
     await switchToArtistMode(page);
     attempt.checks.artist_mode_ready = true;
