@@ -143,40 +143,11 @@ jobs:
           set -euo pipefail
           SERVICE_JSON="$(mktemp)"
           gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format=json > "${SERVICE_JSON}"
-          URL="$(python - "${SERVICE_JSON}" <<'PY'
-import json, sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
-print((((payload.get("status") or {}).get("url")) or "").strip())
-PY
-)"
-          REVISION="$(python - "${SERVICE_JSON}" <<'PY'
-import json, sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
-print((((payload.get("status") or {}).get("latestReadyRevisionName")) or "").strip())
-PY
-)"
-          MEMORY="$(python - "${SERVICE_JSON}" <<'PY'
-import json, sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
-containers = (((payload.get("spec") or {}).get("template") or {}).get("spec") or {}).get("containers") or []
-limits = ((containers[0] if containers else {}).get("resources") or {}).get("limits") or {}
-print((limits.get("memory") or "").strip())
-PY
-)"
-          CONCURRENCY="$(python - "${SERVICE_JSON}" <<'PY'
-import json, sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
-value = (((payload.get("spec") or {}).get("template") or {}).get("spec") or {}).get("containerConcurrency")
-print("" if value is None else str(value))
-PY
-)"
-          SESSION_AFFINITY="$(python - "${SERVICE_JSON}" <<'PY'
-import json, sys
-payload = json.load(open(sys.argv[1], encoding="utf-8"))
-annotations = (((payload.get("spec") or {}).get("template") or {}).get("metadata") or {}).get("annotations") or {}
-print((annotations.get("run.googleapis.com/sessionAffinity") or "").strip())
-PY
-)"
+          URL="$(jq -r '.status.url // ""' "${SERVICE_JSON}")"
+          REVISION="$(jq -r '.status.latestReadyRevisionName // ""' "${SERVICE_JSON}")"
+          MEMORY="$(jq -r '.spec.template.spec.containers[0].resources.limits.memory // ""' "${SERVICE_JSON}")"
+          CONCURRENCY="$(jq -r '.spec.template.spec.containerConcurrency // ""' "${SERVICE_JSON}")"
+          SESSION_AFFINITY="$(jq -r '.spec.template.metadata.annotations["run.googleapis.com/sessionAffinity"] // ""' "${SERVICE_JSON}")"
           echo "url=${URL}" >> "${GITHUB_OUTPUT}"
           echo "revision=${REVISION}" >> "${GITHUB_OUTPUT}"
           echo "service=${CLOUD_RUN_SERVICE}"
