@@ -12,6 +12,7 @@ if str(CODE_ROOT) not in sys.path:
 
 import phase2_runtime_config as cfg
 from phase2_managed_loader import load_prepared_dataset, validate_prepared_dataset
+from prod.langsmith_app_tracing import emit_app_boot_trace, emit_dataset_load_trace
 
 if str(cfg.OFFLINE_V2_CODE_DIR) not in sys.path:
     sys.path.insert(0, str(cfg.OFFLINE_V2_CODE_DIR))
@@ -28,6 +29,11 @@ base_app = app_v2.base_app
 @base_app.st.cache_data(show_spinner=False)
 def load_phase2_dataset_cached(version: str, dataset_root: str) -> tuple[pd.DataFrame, str]:
     frame, release = load_prepared_dataset(version=version or None, dataset_root=Path(dataset_root))
+    emit_dataset_load_trace(
+        dataset_version=release.version,
+        row_count=len(frame),
+        prepared_uri=release.prepared_uri,
+    )
     return frame, release.version
 
 
@@ -52,6 +58,7 @@ def prepare_music_data_cached_phase2(raw_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def patch_base_app_for_phase2() -> None:
+    emit_app_boot_trace()
     app_v2.patch_base_app_for_v2()
     base_app.DEFAULT_DATASET_ID = "managed://latest"
     base_app.read_source = read_source_phase2

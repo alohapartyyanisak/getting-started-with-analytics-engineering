@@ -34,6 +34,9 @@ jobs:
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
       GCS_DATASET_URI: ${{ secrets.GCS_DATASET_URI }}
       GO_LIVE_DATASET_STORAGE_ROOT: /tmp/go-live/data/storage
+      LANGSMITH_PROJECT: ${{ vars.LANGSMITH_PROJECT }}
+      LANGSMITH_API_URL: ${{ vars.LANGSMITH_API_URL }}
+      LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
 
     steps:
       - name: Checkout
@@ -100,13 +103,24 @@ jobs:
           IMAGE_URI: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/go-live-app:${{ steps.meta.outputs.tag }}
         run: |
           set -euo pipefail
+          ENV_FILE="$(mktemp)"
+          {
+            echo "GCS_DATASET_URI: \"${GCS_DATASET_URI}\""
+            echo "GO_LIVE_SYNC_FROM_GCS: \"true\""
+            echo "GO_LIVE_DATASET_STORAGE_ROOT: \"${GO_LIVE_DATASET_STORAGE_ROOT}\""
+            echo "GO_LIVE_APP_TRACE_ENABLED: \"true\""
+            echo "GO_LIVE_TRACE_ENVIRONMENT: \"${{ github.event.inputs.deploy_environment }}\""
+            echo "LANGSMITH_PROJECT: \"${LANGSMITH_PROJECT}\""
+            echo "LANGSMITH_API_URL: \"${LANGSMITH_API_URL}\""
+            echo "LANGSMITH_API_KEY: \"${LANGSMITH_API_KEY}\""
+          } > "${ENV_FILE}"
           gcloud run deploy "${CLOUD_RUN_SERVICE}" \
             --image "${IMAGE_URI}" \
             --region "${GCP_REGION}" \
             --platform managed \
             --allow-unauthenticated \
             --service-account "${GCP_SERVICE_ACCOUNT}" \
-            --set-env-vars "GCS_DATASET_URI=${GCS_DATASET_URI},GO_LIVE_SYNC_FROM_GCS=true,GO_LIVE_DATASET_STORAGE_ROOT=${GO_LIVE_DATASET_STORAGE_ROOT}" \
+            --env-vars-file "${ENV_FILE}" \
             --labels "app=dj-mixing-station,component=go-live,environment=${{ github.event.inputs.deploy_environment }}"
 
       - name: Print deploy summary
