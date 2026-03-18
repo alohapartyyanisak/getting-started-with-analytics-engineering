@@ -71,7 +71,7 @@ try {
 
   await page.getByText('Self Mix', { exact: true }).click();
   await page.getByText('Pick Artists', { exact: true }).click();
-  await page.getByText('Artist Picks', { exact: false }).waitFor({ state: 'visible', timeout: 15000 });
+  await page.getByPlaceholder('Search and select artists').first().waitFor({ state: 'visible', timeout: 15000 });
   result.checks.artist_mode_ready = true;
 
   for (const artist of ARTISTS) {
