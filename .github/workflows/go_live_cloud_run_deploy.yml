@@ -33,6 +33,7 @@ jobs:
       GAR_REPOSITORY: ${{ vars.GAR_REPOSITORY }}
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
       CLOUD_RUN_MEMORY: ${{ vars.CLOUD_RUN_MEMORY }}
+      CLOUD_RUN_CONCURRENCY: ${{ vars.CLOUD_RUN_CONCURRENCY }}
       GCS_DATASET_URI: ${{ secrets.GCS_DATASET_URI }}
       GO_LIVE_DATASET_STORAGE_ROOT: /tmp/go-live/data/storage
       LANGSMITH_PROJECT: ${{ vars.LANGSMITH_PROJECT }}
@@ -82,6 +83,9 @@ jobs:
           if [ -z "${CLOUD_RUN_MEMORY}" ]; then
             CLOUD_RUN_MEMORY="1Gi"
           fi
+          if [ -z "${CLOUD_RUN_CONCURRENCY}" ]; then
+            CLOUD_RUN_CONCURRENCY="1"
+          fi
 
       - name: Configure Docker auth
         run: |
@@ -125,6 +129,8 @@ jobs:
             --allow-unauthenticated \
             --service-account "${GCP_SERVICE_ACCOUNT}" \
             --memory "${CLOUD_RUN_MEMORY:-1Gi}" \
+            --concurrency "${CLOUD_RUN_CONCURRENCY:-1}" \
+            --session-affinity \
             --env-vars-file "${ENV_FILE}" \
             --labels "app=dj-mixing-station,component=go-live,environment=${{ github.event.inputs.deploy_environment }}"
 
