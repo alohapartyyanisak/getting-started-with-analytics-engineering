@@ -34,7 +34,7 @@ jobs:
       APP_BASE_URL: ${{ vars.APP_BASE_URL }}
       APP_URL_INPUT: ${{ github.event.inputs.app_url || '' }}
       SMOKE_ARTISTS: ${{ github.event.inputs.artists || 'Ed Sheeran|Bruno Mars' }}
-      SMOKE_MAX_ATTEMPTS: "3"
+      SMOKE_MAX_ATTEMPTS: "1"
 
     steps:
       - name: Checkout
