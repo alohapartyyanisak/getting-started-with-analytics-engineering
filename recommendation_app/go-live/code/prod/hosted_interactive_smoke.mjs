@@ -241,20 +241,8 @@ async function waitForPlaylistGenerationOutcome(page) {
 
 async function chooseArtist(page, artistName, expectedCount) {
   const quickChip = page.getByRole('button', { name: artistName }).first();
-  if (await quickChip.isVisible().catch(() => false)) {
-    await quickChip.click({ force: true });
-    await waitForFinalPickCount(page, expectedCount);
-    return;
-  }
-
-  const input = page.getByPlaceholder('Search and select artists').first();
-  await input.click();
-  await input.fill(artistName);
-
-  const option = page.locator('[role="option"]').filter({ hasText: artistName }).first();
-  await option.waitFor({ state: 'visible', timeout: 15000 });
-  await option.click();
-
+  await quickChip.waitFor({ state: 'visible', timeout: 15000 });
+  await quickChip.click({ force: true });
   await waitForFinalPickCount(page, expectedCount);
 }
 
@@ -305,6 +293,9 @@ async function runAttempt(attemptNumber) {
 
     await switchToYouTubePlatform(page);
     attempt.checks.youtube_platform_selected = true;
+
+    await switchToArtistMode(page);
+    attempt.checks.artist_mode_reconfirmed = true;
 
     for (let idx = 0; idx < ARTISTS.length; idx += 1) {
       await chooseArtist(page, ARTISTS[idx], idx + 1);
