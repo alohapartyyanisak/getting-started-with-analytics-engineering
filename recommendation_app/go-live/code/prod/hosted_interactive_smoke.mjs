@@ -83,7 +83,26 @@ async function warmApp(appUrl) {
 }
 
 async function waitForBasePage(page) {
-  await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (attempt === 0) {
+      await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    } else {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+    }
+
+    const ready = await Promise.all([
+      page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false),
+      page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false),
+      page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false),
+    ]);
+    if (ready.every(Boolean)) {
+      return;
+    }
+
+    const bodyLength = await page.evaluate(() => (document.body?.innerText || '').trim().length).catch(() => 0);
+    appendEvent(eventLog.console, `base_page_retry attempt=${attempt + 1} body_length=${bodyLength}`);
+  }
+
   await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
   await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
   await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
