@@ -63,6 +63,21 @@ async function waitForBasePage(page) {
   await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
 }
 
+async function waitForInteractiveControls(page) {
+  await page.waitForFunction(
+    () => {
+      const labels = Array.from(document.querySelectorAll('label[data-baseweb="radio"]'));
+      if (labels.length < 5) {
+        return false;
+      }
+      const checkedCount = labels.filter((label) => label.querySelector('input[type="radio"]')?.checked).length;
+      return checkedCount >= 2;
+    },
+    null,
+    { timeout: 30000 },
+  );
+}
+
 async function waitForRadioGroups(page) {
   const groupSelectors = [
     'div[data-testid="stRadio"]',
@@ -123,19 +138,42 @@ async function waitForLabelSelection(page, labelText) {
   );
 }
 
+async function waitForQuickArtistChips(page) {
+  const expectedNames = ['Ed Sheeran', 'Bruno Mars', 'Imagine Dragons', 'Maroon 5'];
+  await page.waitForFunction(
+    (names) => {
+      const buttonTexts = Array.from(document.querySelectorAll('button'))
+        .map((button) => (button.textContent || '').trim())
+        .filter(Boolean);
+      return names.some((name) => buttonTexts.includes(name));
+    },
+    expectedNames,
+    { timeout: 30000 },
+  );
+}
+
 async function switchToArtistMode(page) {
-  const artistInput = page.getByPlaceholder('Search and select artists').first();
-  if (await artistInput.isVisible().catch(() => false)) {
+  await waitForInteractiveControls(page);
+
+  if (await page.waitForFunction(() => {
+    const labels = Array.from(document.querySelectorAll('label[data-baseweb="radio"]'));
+    const pickArtists = labels.find((label) => (label.textContent || '').includes('Pick Artists'));
+    const buttons = Array.from(document.querySelectorAll('button'))
+      .map((button) => (button.textContent || '').trim())
+      .filter(Boolean);
+    return Boolean(
+      pickArtists?.querySelector('input[type="radio"]')?.checked &&
+      buttons.some((name) => ['Ed Sheeran', 'Bruno Mars', 'Imagine Dragons', 'Maroon 5'].includes(name)),
+    );
+  }, null, { timeout: 1500 }).catch(() => null)) {
     return;
   }
 
-  await waitForRadioGroups(page);
   await clickRadioLabel(page, 'Self Mix');
-  await waitForLabelSelection(page, 'Self Mix').catch(() => null);
+  await waitForLabelSelection(page, 'Self Mix');
   await clickRadioLabel(page, 'Pick Artists');
-  await waitForLabelSelection(page, 'Pick Artists').catch(() => null);
-  await page.waitForTimeout(1500);
-  await artistInput.waitFor({ state: 'visible', timeout: 30000 });
+  await waitForLabelSelection(page, 'Pick Artists');
+  await waitForQuickArtistChips(page);
 }
 
 async function chooseArtist(page, artistName) {
