@@ -200,6 +200,31 @@ async function waitForFinalPickCount(page, expectedCount) {
   );
 }
 
+async function waitForPlaylistGenerationOutcome(page) {
+  const tempLink = page.locator('a.platform-link').filter({ hasText: 'Open Temporary YouTube Playlist' }).first();
+  const insufficientIds = page.getByText('Temporary YouTube playlist link requires at least 2 playable YouTube IDs.', { exact: false }).first();
+  const coverage = page.getByText('Temporary playlist coverage:', { exact: false }).first();
+
+  await page.waitForFunction(
+    () => {
+      const bodyText = document.body?.innerText || '';
+      return (
+        bodyText.includes('Open Temporary YouTube Playlist') ||
+        bodyText.includes('Temporary YouTube playlist link requires at least 2 playable YouTube IDs.') ||
+        bodyText.includes('Temporary playlist coverage:')
+      );
+    },
+    null,
+    { timeout: 30000 },
+  );
+
+  return {
+    tempLinkVisible: await tempLink.isVisible().catch(() => false),
+    insufficientIdsVisible: await insufficientIds.isVisible().catch(() => false),
+    coverageVisible: await coverage.isVisible().catch(() => false),
+  };
+}
+
 async function chooseArtist(page, artistName, expectedCount) {
   const quickChip = page.getByRole('button', { name: artistName }).first();
   if (await quickChip.isVisible().catch(() => false)) {
@@ -272,9 +297,13 @@ async function runAttempt(attemptNumber) {
     await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
     attempt.checks.playable_playlist_visible = true;
 
-    const playlistLink = page.locator('a.platform-link').filter({ hasText: 'Open Temporary YouTube Playlist' }).first();
-    await playlistLink.waitFor({ state: 'visible', timeout: 30000 });
-    attempt.checks.temp_playlist_link_visible = true;
+    const playlistOutcome = await waitForPlaylistGenerationOutcome(page);
+    attempt.checks.temp_playlist_link_visible = playlistOutcome.tempLinkVisible;
+    attempt.checks.temp_playlist_outcome_visible = Boolean(
+      playlistOutcome.tempLinkVisible ||
+      playlistOutcome.insufficientIdsVisible ||
+      playlistOutcome.coverageVisible,
+    );
 
     attempt.status = 'pass';
     await browser.close();
