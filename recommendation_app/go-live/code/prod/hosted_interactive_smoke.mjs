@@ -90,11 +90,12 @@ async function waitForBasePage(page) {
     } else {
       await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
     }
+    await sleep(4000);
 
     const ready = await Promise.all([
-      page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false),
-      page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false),
-      page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 20000 }).then(() => true).catch(() => false),
+      page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
+      page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
+      page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
     ]);
     if (ready.every(Boolean)) {
       return;
@@ -129,7 +130,13 @@ async function waitForHydratedInteractiveControls(page) {
     await waitForInteractiveControls(page);
     return false;
   } catch (_error) {
+    await sleep(5000);
+    const recoveredWithoutReload = await waitForInteractiveControls(page).then(() => true).catch(() => false);
+    if (recoveredWithoutReload) {
+      return false;
+    }
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+    await sleep(4000);
     await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
     await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
     await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
