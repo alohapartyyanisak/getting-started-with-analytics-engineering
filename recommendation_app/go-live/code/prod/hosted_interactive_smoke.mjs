@@ -208,27 +208,34 @@ async function waitForQuickArtistChips(page) {
 }
 
 async function switchToArtistMode(page) {
-  return waitForInteractiveControls(page);
+  await waitForInteractiveControls(page);
 
-  if (await page.waitForFunction(() => {
-    const labels = Array.from(document.querySelectorAll('label[data-baseweb="radio"]'));
-    const pickArtists = labels.find((label) => (label.textContent || '').includes('Pick Artists'));
-    const buttons = Array.from(document.querySelectorAll('button'))
-      .map((button) => (button.textContent || '').trim())
-      .filter(Boolean);
-    return Boolean(
-      pickArtists?.querySelector('input[type="radio"]')?.checked &&
-      buttons.some((name) => ['Ed Sheeran', 'Bruno Mars', 'Imagine Dragons', 'Maroon 5'].includes(name)),
-    );
-  }, null, { timeout: 1500 }).catch(() => null)) {
-    return;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const alreadyReady = await page.waitForFunction(() => {
+      const bodyText = document.body?.innerText || '';
+      return bodyText.includes('Choose artists (search enabled).');
+    }, null, { timeout: 1200 }).catch(() => null);
+    if (alreadyReady) {
+      await waitForQuickArtistChips(page);
+      return;
+    }
+
+    await clickRadioLabel(page, 'Self Mix');
+    await waitForLabelSelection(page, 'Self Mix');
+    await clickRadioLabel(page, 'Pick Artists');
+    await waitForLabelSelection(page, 'Pick Artists');
+
+    const artistModeReady = await page.waitForFunction(() => {
+      const bodyText = document.body?.innerText || '';
+      return bodyText.includes('Choose artists (search enabled).');
+    }, null, { timeout: 3000 }).catch(() => null);
+    if (artistModeReady) {
+      await waitForQuickArtistChips(page);
+      return;
+    }
   }
 
-  await clickRadioLabel(page, 'Self Mix');
-  await waitForLabelSelection(page, 'Self Mix');
-  await clickRadioLabel(page, 'Pick Artists');
-  await waitForLabelSelection(page, 'Pick Artists');
-  await waitForQuickArtistChips(page);
+  throw new Error('Artist mode did not stick');
 }
 
 async function switchToYouTubePlatform(page) {
