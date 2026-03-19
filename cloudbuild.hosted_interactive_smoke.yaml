@@ -1,5 +1,5 @@
 steps:
-  - name: mcr.microsoft.com/playwright:v1.52.0-jammy
+  - name: mcr.microsoft.com/playwright:v1.58.2-jammy
     entrypoint: bash
     env:
       - APP_URL=${_APP_URL}
@@ -19,6 +19,6 @@ steps:
         smoke_exit=${PIPESTATUS[0]}
         set -e
         echo "smoke_exit=${smoke_exit}"
-        node -e "const fs=require('fs'); const payload=JSON.parse(fs.readFileSync('recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json','utf8')); console.log('__SMOKE_RESULT__=' + JSON.stringify(payload));"
+        node -e "const fs=require('fs'); const path='recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json'; if (fs.existsSync(path)) { const payload=JSON.parse(fs.readFileSync(path,'utf8')); console.log('__SMOKE_RESULT__=' + JSON.stringify(payload)); } else { console.log('__SMOKE_RESULT__=' + JSON.stringify({status:'fail', error:'missing_result_json'})); }"
         exit "${smoke_exit}"
 timeout: 1800s

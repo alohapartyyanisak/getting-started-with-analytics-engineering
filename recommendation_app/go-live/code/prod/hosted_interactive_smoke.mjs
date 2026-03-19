@@ -309,25 +309,27 @@ async function chooseArtist(page, artistName, expectedCount) {
 async function runAttempt(attemptNumber) {
   await warmApp(APP_URL);
 
-  const browser = await chromium.launch({
-    headless: true,
-    args: ['--disable-dev-shm-usage'],
-  });
-  const context = await browser.newContext({
-    viewport: { width: 1600, height: 2000 },
-    serviceWorkers: 'block',
-  });
-  const page = await context.newPage();
-  await attachNetworkGuards(page);
-
   const attempt = {
     attempt: attemptNumber,
     status: 'fail',
     checks: {},
     dom_debug: {},
   };
+  let browser;
+  let page;
 
   try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--disable-dev-shm-usage'],
+    });
+    const context = await browser.newContext({
+      viewport: { width: 1600, height: 2000 },
+      serviceWorkers: 'block',
+    });
+    page = await context.newPage();
+    await attachNetworkGuards(page);
+
     await waitForBasePage(page);
     attempt.checks.page_loaded = true;
 
@@ -379,14 +381,16 @@ async function runAttempt(attemptNumber) {
     );
 
     attempt.status = 'pass';
-    await browser.close();
+    await browser?.close();
     return attempt;
   } catch (error) {
     attempt.error = String(error?.message || error);
     const screenshotPath = `recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_failure_attempt_${attemptNumber}.png`;
-    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+    if (page) {
+      await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+    }
     attempt.screenshot_path = screenshotPath;
-    await browser.close();
+    await browser?.close().catch(() => {});
     return attempt;
   }
 }
