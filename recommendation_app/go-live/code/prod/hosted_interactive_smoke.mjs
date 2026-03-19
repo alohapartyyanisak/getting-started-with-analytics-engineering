@@ -258,16 +258,8 @@ async function switchToArtistMode(page) {
 }
 
 async function switchToYouTubePlatform(page) {
-  if (await page.waitForFunction(() => {
-    const labels = Array.from(document.querySelectorAll('label[data-baseweb="radio"]'));
-    const youtube = labels.find((label) => (label.textContent || '').includes('YouTube'));
-    return Boolean(youtube?.querySelector('input[type="radio"]')?.checked);
-  }, null, { timeout: 1500 }).catch(() => null)) {
-    return;
-  }
-
   await clickRadioLabel(page, 'YouTube');
-  await waitForLabelSelection(page, 'YouTube');
+  await page.getByText('Playback', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
 }
 
 async function waitForFinalPickCount(page, expectedCount) {
