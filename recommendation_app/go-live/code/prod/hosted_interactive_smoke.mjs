@@ -23,6 +23,10 @@ function appendEvent(target, value, limit = 40) {
   }
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function shouldBlockRequest(url) {
   return [
     'youtube.com',
@@ -54,6 +58,28 @@ async function attachNetworkGuards(page) {
       `${request.method()} ${request.url()} :: ${request.failure()?.errorText || 'failed'}`,
     );
   });
+}
+
+async function warmApp(appUrl) {
+  const baseUrl = new URL(appUrl);
+  const targets = [
+    appUrl,
+    new URL('/_stcore/health', baseUrl).toString(),
+    new URL('/_stcore/host-config', baseUrl).toString(),
+  ];
+
+  for (const target of targets) {
+    try {
+      await fetch(target, {
+        method: 'GET',
+        redirect: 'follow',
+        cache: 'no-store',
+      });
+    } catch (_error) {
+      // Best-effort warmup only.
+    }
+    await sleep(500);
+  }
 }
 
 async function waitForBasePage(page) {
@@ -247,6 +273,8 @@ async function chooseArtist(page, artistName, expectedCount) {
 }
 
 async function runAttempt(attemptNumber) {
+  await warmApp(APP_URL);
+
   const browser = await chromium.launch({
     headless: true,
     args: ['--disable-dev-shm-usage'],
