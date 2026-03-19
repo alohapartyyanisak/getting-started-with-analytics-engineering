@@ -34,16 +34,11 @@ jobs:
       APP_BASE_URL: ${{ vars.APP_BASE_URL }}
       APP_URL_INPUT: ${{ github.event.inputs.app_url || '' }}
       SMOKE_ARTISTS: ${{ github.event.inputs.artists || 'Ed Sheeran|Bruno Mars' }}
-      SMOKE_MAX_ATTEMPTS: "1"
+      SMOKE_SERIES_ID: gcp-smoke-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
 
       - name: Auth to Google Cloud (Workload Identity)
         if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && env.GCP_SERVICE_ACCOUNT != '' }}
@@ -80,20 +75,36 @@ jobs:
           echo "app_url=${APP_URL}" >> "${GITHUB_OUTPUT}"
           echo "app_url=${APP_URL}"
 
-      - name: Install Playwright
-        run: |
-          set -euo pipefail
-          npm init -y >/dev/null 2>&1
-          npm install --no-save playwright
-          npx playwright install --with-deps chromium
-
-      - name: Run hosted interactive smoke
+      - name: Run hosted interactive smoke in Cloud Build
         env:
           APP_URL: ${{ steps.resolve_url.outputs.app_url }}
         run: |
           set -euo pipefail
           mkdir -p recommendation_app/go-live/code/prod/.artifacts
-          node recommendation_app/go-live/code/prod/hosted_interactive_smoke.mjs | tee recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json
+          gcloud builds submit \
+            --project "${GCP_PROJECT_ID}" \
+            --config cloudbuild.hosted_interactive_smoke.yaml \
+            --substitutions "_APP_URL=${APP_URL},_SMOKE_ARTISTS=${SMOKE_ARTISTS},_SMOKE_SERIES_ID=${SMOKE_SERIES_ID}" \
+            . | tee recommendation_app/go-live/code/prod/.artifacts/cloudbuild_hosted_interactive_smoke.log
+
+      - name: Extract hosted interactive smoke result from Cloud Build log
+        if: always()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          log_path = Path("recommendation_app/go-live/code/prod/.artifacts/cloudbuild_hosted_interactive_smoke.log")
+          result_path = Path("recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json")
+          if not log_path.exists():
+            raise SystemExit(0)
+
+          text = log_path.read_text(encoding="utf-8", errors="replace")
+          lines = [line.strip() for line in text.splitlines() if line.strip()]
+          for line in reversed(lines):
+            if line.startswith("__SMOKE_RESULT__="):
+              result_path.write_text(line.split("=", 1)[1] + "\n", encoding="utf-8")
+              break
+          PY
 
       - name: Print hosted interactive smoke summary
         if: always()

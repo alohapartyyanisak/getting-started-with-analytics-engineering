@@ -11,6 +11,7 @@ const ARTISTS = String(process.env.SMOKE_ARTISTS || 'Ed Sheeran|Bruno Mars')
   .map((s) => s.trim())
   .filter(Boolean);
 const MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.SMOKE_MAX_ATTEMPTS || '1', 10) || 1);
+const SMOKE_SERIES_ID = String(process.env.SMOKE_SERIES_ID || '').trim();
 const eventLog = {
   console: [],
   page_errors: [],
@@ -395,6 +396,7 @@ const result = {
   app_url: APP_URL,
   artists: ARTISTS,
   max_attempts: MAX_ATTEMPTS,
+  smoke_series_id: SMOKE_SERIES_ID || null,
   attempts: [],
   checks: {},
 };

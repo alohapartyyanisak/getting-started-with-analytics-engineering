@@ -1,0 +1,33 @@
+steps:
+  - name: mcr.microsoft.com/playwright:v1.52.0-jammy
+    entrypoint: bash
+    env:
+      - APP_URL=${_APP_URL}
+      - SMOKE_ARTISTS=${_SMOKE_ARTISTS}
+      - SMOKE_MAX_ATTEMPTS=1
+      - SMOKE_SERIES_ID=${_SMOKE_SERIES_ID}
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+    args:
+      - -lc
+      - |
+        set -euo pipefail
+        mkdir -p recommendation_app/go-live/code/prod/.artifacts
+        npm init -y >/dev/null 2>&1
+        npm install --no-save playwright >/dev/null 2>&1
+        set +e
+        node recommendation_app/go-live/code/prod/hosted_interactive_smoke.mjs | tee recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json
+        smoke_exit=${PIPESTATUS[0]}
+        set -e
+        echo "smoke_exit=${smoke_exit}"
+        python - <<'PY'
+        import json
+        from pathlib import Path
+
+        path = Path("recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        print("__SMOKE_RESULT__=" + json.dumps(payload, ensure_ascii=False))
+        PY
+        exit "${smoke_exit}"
+timeout: 1800s
+options:
+  logging: CLOUD_LOGGING_ONLY
