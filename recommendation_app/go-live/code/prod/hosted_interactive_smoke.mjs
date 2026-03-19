@@ -10,7 +10,7 @@ const ARTISTS = String(process.env.SMOKE_ARTISTS || 'Ed Sheeran|Bruno Mars')
   .split('|')
   .map((s) => s.trim())
   .filter(Boolean);
-const MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.SMOKE_MAX_ATTEMPTS || '3', 10) || 3);
+const MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.SMOKE_MAX_ATTEMPTS || '1', 10) || 1);
 const eventLog = {
   console: [],
   page_errors: [],
