@@ -78,6 +78,20 @@ async function waitForInteractiveControls(page) {
   );
 }
 
+async function waitForHydratedInteractiveControls(page) {
+  try {
+    await waitForInteractiveControls(page);
+    return false;
+  } catch (_error) {
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await waitForInteractiveControls(page);
+    return true;
+  }
+}
+
 async function waitForRadioGroups(page) {
   const groupSelectors = [
     'div[data-testid="stRadio"]',
@@ -153,7 +167,7 @@ async function waitForQuickArtistChips(page) {
 }
 
 async function switchToArtistMode(page) {
-  await waitForInteractiveControls(page);
+  return waitForInteractiveControls(page);
 
   if (await page.waitForFunction(() => {
     const labels = Array.from(document.querySelectorAll('label[data-baseweb="radio"]'));
@@ -266,6 +280,12 @@ async function runAttempt(attemptNumber) {
   try {
     await waitForBasePage(page);
     attempt.checks.page_loaded = true;
+
+    const reloadedForHydration = await waitForHydratedInteractiveControls(page);
+    if (reloadedForHydration) {
+      attempt.checks.reloaded_for_hydration = true;
+    }
+
     attempt.dom_debug = await page.evaluate(() => ({
       stRadioCount: document.querySelectorAll('div[data-testid="stRadio"]').length,
       ariaRadioGroupCount: document.querySelectorAll('[role="radiogroup"]').length,
