@@ -176,6 +176,19 @@ async function switchToArtistMode(page) {
   await waitForQuickArtistChips(page);
 }
 
+async function switchToYouTubePlatform(page) {
+  if (await page.waitForFunction(() => {
+    const labels = Array.from(document.querySelectorAll('label[data-baseweb="radio"]'));
+    const youtube = labels.find((label) => (label.textContent || '').includes('YouTube'));
+    return Boolean(youtube?.querySelector('input[type="radio"]')?.checked);
+  }, null, { timeout: 1500 }).catch(() => null)) {
+    return;
+  }
+
+  await clickRadioLabel(page, 'YouTube');
+  await waitForLabelSelection(page, 'YouTube');
+}
+
 async function waitForFinalPickCount(page, expectedCount) {
   await page.waitForFunction(
     (count) => {
@@ -245,6 +258,9 @@ async function runAttempt(attemptNumber) {
     await switchToArtistMode(page);
     attempt.checks.artist_mode_ready = true;
 
+    await switchToYouTubePlatform(page);
+    attempt.checks.youtube_platform_selected = true;
+
     for (let idx = 0; idx < ARTISTS.length; idx += 1) {
       await chooseArtist(page, ARTISTS[idx], idx + 1);
     }
@@ -256,7 +272,7 @@ async function runAttempt(attemptNumber) {
     await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
     attempt.checks.playable_playlist_visible = true;
 
-    const playlistLink = page.getByRole('link', { name: 'Open Temporary YouTube Playlist' });
+    const playlistLink = page.locator('a.platform-link').filter({ hasText: 'Open Temporary YouTube Playlist' }).first();
     await playlistLink.waitFor({ state: 'visible', timeout: 30000 });
     attempt.checks.temp_playlist_link_visible = true;
 
