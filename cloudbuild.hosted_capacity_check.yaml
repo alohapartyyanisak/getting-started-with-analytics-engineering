@@ -1,0 +1,26 @@
+steps:
+  - name: mcr.microsoft.com/playwright:v1.58.2-jammy
+    entrypoint: bash
+    env:
+      - APP_URL=${_APP_URL}
+      - CAPACITY_PARALLEL_USERS=${_CAPACITY_PARALLEL_USERS}
+      - CAPACITY_WAVES=${_CAPACITY_WAVES}
+      - CAPACITY_STAGGER_MS=${_CAPACITY_STAGGER_MS}
+      - CAPACITY_SUCCESS_THRESHOLD=${_CAPACITY_SUCCESS_THRESHOLD}
+      - CAPACITY_SERIES_ID=${_CAPACITY_SERIES_ID}
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+    args:
+      - -lc
+      - |
+        set -euo pipefail
+        mkdir -p recommendation_app/go-live/code/prod/.artifacts
+        npm init -y >/dev/null 2>&1
+        npm install --no-save playwright >/dev/null 2>&1
+        set +e
+        node recommendation_app/go-live/code/prod/hosted_capacity_check.mjs | tee recommendation_app/go-live/code/prod/.artifacts/hosted_capacity_check_result.json
+        capacity_exit=${PIPESTATUS[0]}
+        set -e
+        echo "capacity_exit=${capacity_exit}"
+        node -e "const fs=require('fs'); const path='recommendation_app/go-live/code/prod/.artifacts/hosted_capacity_check_result.json'; if (fs.existsSync(path)) { const payload=JSON.parse(fs.readFileSync(path,'utf8')); console.log('__CAPACITY_RESULT__=' + JSON.stringify(payload)); } else { console.log('__CAPACITY_RESULT__=' + JSON.stringify({status:'fail', error:'missing_capacity_result_json'})); }"
+        exit "${capacity_exit}"
+timeout: 2400s

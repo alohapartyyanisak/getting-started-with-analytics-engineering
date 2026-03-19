@@ -1,0 +1,148 @@
+name: go-live-capacity-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_url:
+        description: "Optional app URL override; blank resolves from Cloud Run service"
+        required: false
+        default: ""
+      parallel_users:
+        description: "Concurrent browser sessions per wave"
+        required: false
+        default: "5"
+      waves:
+        description: "Number of waves to run"
+        required: false
+        default: "3"
+      stagger_ms:
+        description: "Delay between session starts within a wave"
+        required: false
+        default: "750"
+      success_threshold:
+        description: "Minimum success rate required"
+        required: false
+        default: "0.9"
+
+concurrency:
+  group: go-live-capacity-check
+  cancel-in-progress: false
+
+jobs:
+  run-capacity-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
+      APP_URL_INPUT: ${{ github.event.inputs.app_url || '' }}
+      CAPACITY_PARALLEL_USERS: ${{ github.event.inputs.parallel_users || '5' }}
+      CAPACITY_WAVES: ${{ github.event.inputs.waves || '3' }}
+      CAPACITY_STAGGER_MS: ${{ github.event.inputs.stagger_ms || '750' }}
+      CAPACITY_SUCCESS_THRESHOLD: ${{ github.event.inputs.success_threshold || '0.9' }}
+      CAPACITY_SERIES_ID: gcp-capacity-${{ github.run_id }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Auth to Google Cloud (Workload Identity)
+        if: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER != '' && env.GCP_SERVICE_ACCOUNT != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
+
+      - name: Auth to Google Cloud (Service Account Key)
+        if: ${{ (env.GCP_WORKLOAD_IDENTITY_PROVIDER == '' || env.GCP_SERVICE_ACCOUNT == '') && env.GCP_SA_KEY != '' }}
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ env.GCP_SA_KEY }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Resolve app URL
+        id: resolve_url
+        run: |
+          set -euo pipefail
+          APP_URL="${APP_URL_INPUT}"
+          if [ -z "${APP_URL}" ]; then
+            test -n "${GCP_REGION}"
+            test -n "${CLOUD_RUN_SERVICE}"
+            APP_URL="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format='value(status.url)')"
+          fi
+          test -n "${APP_URL}"
+          echo "app_url=${APP_URL}" >> "${GITHUB_OUTPUT}"
+          echo "app_url=${APP_URL}"
+
+      - name: Run hosted capacity check in Cloud Build
+        env:
+          APP_URL: ${{ steps.resolve_url.outputs.app_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p recommendation_app/go-live/code/prod/.artifacts
+          gcloud builds submit \
+            --project "${GCP_PROJECT_ID}" \
+            --config cloudbuild.hosted_capacity_check.yaml \
+            --substitutions "_APP_URL=${APP_URL},_CAPACITY_PARALLEL_USERS=${CAPACITY_PARALLEL_USERS},_CAPACITY_WAVES=${CAPACITY_WAVES},_CAPACITY_STAGGER_MS=${CAPACITY_STAGGER_MS},_CAPACITY_SUCCESS_THRESHOLD=${CAPACITY_SUCCESS_THRESHOLD},_CAPACITY_SERIES_ID=${CAPACITY_SERIES_ID}" \
+            . | tee recommendation_app/go-live/code/prod/.artifacts/cloudbuild_hosted_capacity_check.log
+
+      - name: Extract hosted capacity check result from Cloud Build log
+        if: always()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          log_path = Path("recommendation_app/go-live/code/prod/.artifacts/cloudbuild_hosted_capacity_check.log")
+          result_path = Path("recommendation_app/go-live/code/prod/.artifacts/hosted_capacity_check_result.json")
+          if not log_path.exists():
+            raise SystemExit(0)
+
+          text = log_path.read_text(encoding="utf-8", errors="replace")
+          lines = [line.strip() for line in text.splitlines() if line.strip()]
+          for line in reversed(lines):
+            if line.startswith("__CAPACITY_RESULT__="):
+              result_path.write_text(line.split("=", 1)[1] + "\n", encoding="utf-8")
+              break
+          PY
+
+      - name: Print hosted capacity check summary
+        if: always()
+        run: |
+          node - <<'JS'
+          const fs = require('fs');
+          const path = 'recommendation_app/go-live/code/prod/hosted_capacity_check_result.json';
+          if (!fs.existsSync(path)) {
+            console.log('hosted_capacity_check_result.json is missing');
+            process.exit(0);
+          }
+          const payload = JSON.parse(fs.readFileSync(path, 'utf8'));
+          console.log('status=', payload.status);
+          console.log('app_url=', payload.app_url);
+          console.log('parallel_users=', payload.config?.parallel_users);
+          console.log('waves=', payload.config?.waves);
+          console.log('success_rate=', payload.summary?.success_rate);
+          console.log('passed_sessions=', payload.summary?.passed_sessions);
+          console.log('failed_sessions=', payload.summary?.failed_sessions);
+          console.log('p50_elapsed_ms=', payload.summary?.p50_elapsed_ms);
+          console.log('p95_elapsed_ms=', payload.summary?.p95_elapsed_ms);
+          JS
+
+      - name: Upload workflow artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go-live-capacity-check-${{ github.run_id }}
+          path: recommendation_app/go-live/code/prod/.artifacts/
+          include-hidden-files: true
