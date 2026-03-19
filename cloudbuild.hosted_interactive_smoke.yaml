@@ -19,15 +19,6 @@ steps:
         smoke_exit=${PIPESTATUS[0]}
         set -e
         echo "smoke_exit=${smoke_exit}"
-        python - <<'PY'
-        import json
-        from pathlib import Path
-
-        path = Path("recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json")
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        print("__SMOKE_RESULT__=" + json.dumps(payload, ensure_ascii=False))
-        PY
+        node -e "const fs=require('fs'); const payload=JSON.parse(fs.readFileSync('recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json','utf8')); console.log('__SMOKE_RESULT__=' + JSON.stringify(payload));"
         exit "${smoke_exit}"
 timeout: 1800s
-options:
-  logging: CLOUD_LOGGING_ONLY
