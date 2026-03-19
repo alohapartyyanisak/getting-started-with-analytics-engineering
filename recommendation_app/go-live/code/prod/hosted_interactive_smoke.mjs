@@ -176,12 +176,22 @@ async function switchToArtistMode(page) {
   await waitForQuickArtistChips(page);
 }
 
-async function chooseArtist(page, artistName) {
+async function waitForFinalPickCount(page, expectedCount) {
+  await page.waitForFunction(
+    (count) => {
+      const bodyText = document.body?.innerText || '';
+      return bodyText.includes(`Final Picks (${count}/5)`);
+    },
+    expectedCount,
+    { timeout: 20000 },
+  );
+}
+
+async function chooseArtist(page, artistName, expectedCount) {
   const quickChip = page.getByRole('button', { name: artistName }).first();
   if (await quickChip.isVisible().catch(() => false)) {
     await quickChip.click({ force: true });
-    const expectedChip = page.getByText(`Artist: ${artistName}`, { exact: false }).first();
-    await expectedChip.waitFor({ state: 'visible', timeout: 15000 });
+    await waitForFinalPickCount(page, expectedCount);
     return;
   }
 
@@ -193,8 +203,7 @@ async function chooseArtist(page, artistName) {
   await option.waitFor({ state: 'visible', timeout: 15000 });
   await option.click();
 
-  const expectedChip = page.getByText(`Artist: ${artistName}`, { exact: false }).first();
-  await expectedChip.waitFor({ state: 'visible', timeout: 15000 });
+  await waitForFinalPickCount(page, expectedCount);
 }
 
 async function runAttempt(attemptNumber) {
@@ -236,12 +245,12 @@ async function runAttempt(attemptNumber) {
     await switchToArtistMode(page);
     attempt.checks.artist_mode_ready = true;
 
-    for (const artist of ARTISTS) {
-      await chooseArtist(page, artist);
+    for (let idx = 0; idx < ARTISTS.length; idx += 1) {
+      await chooseArtist(page, ARTISTS[idx], idx + 1);
     }
     attempt.checks.artist_selection_persists = true;
 
-    await page.getByText('Final Picks (2/5)', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
+    await waitForFinalPickCount(page, ARTISTS.length);
     attempt.checks.final_pick_box_updated = true;
 
     await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
