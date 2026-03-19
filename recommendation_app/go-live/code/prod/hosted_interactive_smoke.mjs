@@ -137,6 +137,21 @@ async function waitForRadioGroups(page) {
 }
 
 async function clickRadioLabel(page, labelText) {
+  const inputLocator = page
+    .locator('label[data-baseweb="radio"]')
+    .filter({ hasText: labelText })
+    .locator('input[type="radio"]')
+    .first();
+  if (await inputLocator.count()) {
+    await inputLocator.scrollIntoViewIfNeeded().catch(() => null);
+    try {
+      await inputLocator.check({ force: true });
+      return;
+    } catch (_error) {
+      // Fall back to clicking the label wrapper.
+    }
+  }
+
   const locators = [
     page.locator('label[data-baseweb="radio"]').filter({ hasText: labelText }).first(),
     page.getByText(labelText, { exact: true }).first(),
