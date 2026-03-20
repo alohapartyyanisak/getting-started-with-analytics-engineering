@@ -125,6 +125,18 @@ def _render_spotify_embed(track_id: str) -> None:
     )
 
 
+def _render_hidden_startup_health(status: str) -> None:
+    base_app.st.markdown(
+        (
+            '<div data-testid="startup-health-status" '
+            'style="display:none;visibility:hidden;height:0;overflow:hidden;">'
+            f"{status}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def _render_player_section(queue: pd.DataFrame) -> None:
     base_app.st.subheader("Playable Playlist")
     selected_label = base_app.st.selectbox("Now Playing", options=queue["queue_label"].tolist(), index=0)
@@ -269,12 +281,16 @@ def main() -> None:
         raw_df, source_path, dataset_path = read_source_phase2(None, base_app.DEFAULT_DATASET_ID)
         data = prepare_music_data_cached_phase2(raw_df)
     except Exception as exc:
+        _render_hidden_startup_health("Unhealthy")
         base_app.st.error(str(exc))
         base_app.st.stop()
 
     if data.empty:
+        _render_hidden_startup_health("Unhealthy")
         base_app.st.error("No usable rows found after cleaning the dataset.")
         base_app.st.stop()
+
+    _render_hidden_startup_health("Healthy")
 
     seed_weights, experience_state = base_app.render_seed_experience(data)
 

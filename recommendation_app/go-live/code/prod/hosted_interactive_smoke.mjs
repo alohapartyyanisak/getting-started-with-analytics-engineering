@@ -83,6 +83,29 @@ async function warmApp(appUrl) {
   }
 }
 
+async function waitForStartupHealthReady(page, timeoutMs = 60000) {
+  const hiddenHealth = page.locator('[data-testid="startup-health-status"]').first();
+  const hiddenHealthReady = hiddenHealth
+    .waitFor({ state: 'attached', timeout: timeoutMs })
+    .then(async () => {
+      const value = await hiddenHealth.textContent();
+      return String(value || '').trim() === 'Healthy';
+    })
+    .catch(() => false);
+
+  const visibleHealthReady = page
+    .getByText('Startup Health: Healthy', { exact: false })
+    .waitFor({ state: 'visible', timeout: timeoutMs })
+    .then(() => true)
+    .catch(() => false);
+
+  const results = await Promise.all([hiddenHealthReady, visibleHealthReady]);
+  if (results.some(Boolean)) {
+    return;
+  }
+  throw new Error(`Startup health did not become ready within ${timeoutMs}ms`);
+}
+
 async function waitForBasePage(page) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (attempt === 0) {
@@ -93,7 +116,7 @@ async function waitForBasePage(page) {
     await sleep(4000);
 
     const ready = await Promise.all([
-      page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
+      waitForStartupHealthReady(page, 35000).then(() => true).catch(() => false),
       page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
       page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
     ]);
@@ -105,7 +128,7 @@ async function waitForBasePage(page) {
     appendEvent(eventLog.console, `base_page_retry attempt=${attempt + 1} body_length=${bodyLength}`);
   }
 
-  await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+  await waitForStartupHealthReady(page, 60000);
   await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
   await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
 }
@@ -137,7 +160,7 @@ async function waitForHydratedInteractiveControls(page) {
     }
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
     await sleep(4000);
-    await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await waitForStartupHealthReady(page, 60000);
     await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
     await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
     await waitForInteractiveControls(page);
