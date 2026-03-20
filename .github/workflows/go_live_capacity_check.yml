@@ -23,6 +23,10 @@ on:
         description: "Minimum success rate required"
         required: false
         default: "0.9"
+      capacity_profile:
+        description: "Capacity probe profile: full or shell-only"
+        required: false
+        default: "full"
 
 concurrency:
   group: go-live-capacity-check
@@ -48,6 +52,7 @@ jobs:
       CAPACITY_WAVES: ${{ github.event.inputs.waves || '3' }}
       CAPACITY_STAGGER_MS: ${{ github.event.inputs.stagger_ms || '750' }}
       CAPACITY_SUCCESS_THRESHOLD: ${{ github.event.inputs.success_threshold || '0.9' }}
+      CAPACITY_PROFILE: ${{ github.event.inputs.capacity_profile || 'full' }}
       CAPACITY_SERIES_ID: gcp-capacity-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
@@ -95,7 +100,7 @@ jobs:
           gcloud builds submit \
             --project "${GCP_PROJECT_ID}" \
             --config cloudbuild.hosted_capacity_check.yaml \
-            --substitutions "_APP_URL=${APP_URL},_CAPACITY_PARALLEL_USERS=${CAPACITY_PARALLEL_USERS},_CAPACITY_WAVES=${CAPACITY_WAVES},_CAPACITY_STAGGER_MS=${CAPACITY_STAGGER_MS},_CAPACITY_SUCCESS_THRESHOLD=${CAPACITY_SUCCESS_THRESHOLD},_CAPACITY_SERIES_ID=${CAPACITY_SERIES_ID}" \
+            --substitutions "_APP_URL=${APP_URL},_CAPACITY_PARALLEL_USERS=${CAPACITY_PARALLEL_USERS},_CAPACITY_WAVES=${CAPACITY_WAVES},_CAPACITY_STAGGER_MS=${CAPACITY_STAGGER_MS},_CAPACITY_SUCCESS_THRESHOLD=${CAPACITY_SUCCESS_THRESHOLD},_CAPACITY_PROFILE=${CAPACITY_PROFILE},_CAPACITY_SERIES_ID=${CAPACITY_SERIES_ID}" \
             . | tee recommendation_app/go-live/code/prod/.artifacts/cloudbuild_hosted_capacity_check.log
 
       - name: Extract hosted capacity check result from Cloud Build log
@@ -132,6 +137,7 @@ jobs:
           console.log('app_url=', payload.app_url);
           console.log('parallel_users=', payload.config?.parallel_users);
           console.log('waves=', payload.config?.waves);
+          console.log('capacity_profile=', payload.config?.capacity_profile);
           console.log('success_rate=', payload.summary?.success_rate);
           console.log('passed_sessions=', payload.summary?.passed_sessions);
           console.log('failed_sessions=', payload.summary?.failed_sessions);

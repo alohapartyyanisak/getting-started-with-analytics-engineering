@@ -10,6 +10,7 @@ const PARALLEL_USERS = Math.max(1, Number.parseInt(process.env.CAPACITY_PARALLEL
 const WAVES = Math.max(1, Number.parseInt(process.env.CAPACITY_WAVES || '3', 10) || 3);
 const STAGGER_MS = Math.max(0, Number.parseInt(process.env.CAPACITY_STAGGER_MS || '750', 10) || 750);
 const SUCCESS_THRESHOLD = Math.min(1, Math.max(0, Number.parseFloat(process.env.CAPACITY_SUCCESS_THRESHOLD || '0.9') || 0.9));
+const CAPACITY_PROFILE = String(process.env.CAPACITY_PROFILE || 'full').trim().toLowerCase() || 'full';
 const SERIES_ID = String(process.env.CAPACITY_SERIES_ID || '').trim() || null;
 
 function sleep(ms) {
@@ -89,11 +90,13 @@ async function runSession(browser, sessionId) {
     await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
     await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
     await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
-    await page.waitForFunction(
-      () => Array.from(document.querySelectorAll('label[data-baseweb="radio"]')).length >= 5,
-      null,
-      { timeout: 60000 },
-    );
+    if (CAPACITY_PROFILE !== 'shell-only') {
+      await page.waitForFunction(
+        () => Array.from(document.querySelectorAll('label[data-baseweb="radio"]')).length >= 5,
+        null,
+        { timeout: 60000 },
+      );
+    }
 
     const domDebug = await page.evaluate(() => ({
       bodyLength: (document.body?.innerText || '').trim().length,
@@ -179,6 +182,7 @@ const result = {
     waves: WAVES,
     stagger_ms: STAGGER_MS,
     success_threshold: SUCCESS_THRESHOLD,
+    capacity_profile: CAPACITY_PROFILE,
   },
   summary: {
     total_sessions: total,
