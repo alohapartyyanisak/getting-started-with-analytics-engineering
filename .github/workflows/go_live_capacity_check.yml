@@ -37,7 +37,7 @@ on:
         default: "full"
 
 concurrency:
-  group: go-live-capacity-check
+  group: go-live-capacity-check-${{ github.event.inputs.target_label || 'developer' }}-${{ github.event.inputs.capacity_profile || 'full' }}
   cancel-in-progress: false
 
 jobs:

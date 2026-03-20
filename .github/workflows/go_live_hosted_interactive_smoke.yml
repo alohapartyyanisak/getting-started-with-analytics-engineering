@@ -21,7 +21,7 @@ on:
         default: "Ed Sheeran|Bruno Mars"
 
 concurrency:
-  group: go-live-hosted-interactive-smoke
+  group: go-live-hosted-interactive-smoke-${{ github.event.inputs.target_label || 'developer' }}
   cancel-in-progress: false
 
 jobs:
