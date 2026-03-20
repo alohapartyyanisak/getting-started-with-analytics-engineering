@@ -26,6 +26,8 @@ base_app = app_v2.base_app
 _ORIGINAL_MAIN = base_app.main
 _ORIGINAL_BUILD_PLAYABLE_YOUTUBE_IDS = base_app.build_playable_youtube_ids
 _ORIGINAL_RENDER_MODERN_DEBUG_TABLE = base_app.render_modern_debug_table
+_ORIGINAL_ST_VIDEO = base_app.st.video
+_ORIGINAL_COMPONENTS_HTML = base_app.components.html
 
 
 @base_app.st.cache_data(show_spinner=False)
@@ -106,8 +108,12 @@ def _current_render_count() -> int:
     return int(base_app.st.session_state.get("_go_live_render_count", 0) or 0)
 
 
+def _defer_heavy_rendering() -> bool:
+    return _current_render_count() <= 1
+
+
 def build_playable_youtube_ids_phase2(*args: Any, **kwargs: Any):
-    if _current_render_count() <= 1:
+    if _defer_heavy_rendering():
         queue = args[0] if args else kwargs.get("queue")
         target_rows = min(len(queue), int(kwargs.get("max_ids", 50) or 50)) if isinstance(queue, pd.DataFrame) else 0
         return (
@@ -131,10 +137,23 @@ def build_playable_youtube_ids_phase2(*args: Any, **kwargs: Any):
 
 
 def render_modern_debug_table_phase2(playlist: pd.DataFrame) -> None:
-    if _current_render_count() <= 1:
+    if _defer_heavy_rendering():
         base_app.st.caption("Recommendation Debug View loads after the first interaction.")
         return
     _ORIGINAL_RENDER_MODERN_DEBUG_TABLE(playlist)
+
+
+def st_video_phase2(*args: Any, **kwargs: Any):
+    if _defer_heavy_rendering():
+        base_app.st.caption("Playback embed loads after the first interaction.")
+        return None
+    return _ORIGINAL_ST_VIDEO(*args, **kwargs)
+
+
+def components_html_phase2(*args: Any, **kwargs: Any):
+    if _defer_heavy_rendering():
+        return None
+    return _ORIGINAL_COMPONENTS_HTML(*args, **kwargs)
 
 
 def main_phase2() -> None:
@@ -153,6 +172,8 @@ def patch_base_app_for_phase2() -> None:
     base_app.get_seed_ui_options = get_seed_ui_options_phase2
     base_app.build_playable_youtube_ids = build_playable_youtube_ids_phase2
     base_app.render_modern_debug_table = render_modern_debug_table_phase2
+    base_app.st.video = st_video_phase2
+    base_app.components.html = components_html_phase2
     base_app.main = main_phase2
 
 
