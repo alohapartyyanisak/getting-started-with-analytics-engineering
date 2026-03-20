@@ -7,6 +7,14 @@ on:
         description: "Optional app URL override; blank resolves from Cloud Run service"
         required: false
         default: ""
+      cloud_run_service_override:
+        description: "Optional Cloud Run service override for isolated test targets"
+        required: false
+        default: ""
+      target_label:
+        description: "Short label for artifact naming, e.g. developer or lighter"
+        required: false
+        default: "developer"
       artists:
         description: "Pipe-delimited artist seeds to add during smoke"
         required: false
@@ -33,6 +41,8 @@ jobs:
       CLOUD_RUN_SERVICE: ${{ vars.CLOUD_RUN_SERVICE }}
       APP_BASE_URL: ${{ vars.APP_BASE_URL }}
       APP_URL_INPUT: ${{ github.event.inputs.app_url || '' }}
+      CLOUD_RUN_SERVICE_OVERRIDE: ${{ github.event.inputs.cloud_run_service_override || '' }}
+      TARGET_LABEL: ${{ github.event.inputs.target_label || 'developer' }}
       SMOKE_ARTISTS: ${{ github.event.inputs.artists || 'Ed Sheeran|Bruno Mars' }}
       SMOKE_SERIES_ID: gcp-smoke-${{ github.run_id }}-${{ github.run_attempt }}
 
@@ -63,14 +73,20 @@ jobs:
         run: |
           set -euo pipefail
           APP_URL="${APP_URL_INPUT}"
+          SERVICE_NAME="${CLOUD_RUN_SERVICE_OVERRIDE}"
+          if [ -z "${SERVICE_NAME}" ]; then
+            SERVICE_NAME="${CLOUD_RUN_SERVICE}"
+          fi
           if [ -z "${APP_URL}" ]; then
             test -n "${GCP_REGION}"
-            test -n "${CLOUD_RUN_SERVICE}"
-            APP_URL="$(gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format='value(status.url)')"
+            test -n "${SERVICE_NAME}"
+            APP_URL="$(gcloud run services describe "${SERVICE_NAME}" --region "${GCP_REGION}" --format='value(status.url)')"
           fi
           test -n "${APP_URL}"
           echo "app_url=${APP_URL}" >> "${GITHUB_OUTPUT}"
+          echo "service_name=${SERVICE_NAME}" >> "${GITHUB_OUTPUT}"
           echo "app_url=${APP_URL}"
+          echo "service_name=${SERVICE_NAME}"
 
       - name: Run hosted interactive smoke in Cloud Build
         env:
@@ -122,6 +138,8 @@ jobs:
           const payload = JSON.parse(text.slice(idx));
           console.log('status=', payload.status);
           console.log('app_url=', payload.app_url);
+          console.log('service_name=', process.env.SERVICE_NAME || '');
+          console.log('target_label=', process.env.TARGET_LABEL || '');
           console.log('artists=', (payload.artists || []).join(', '));
           console.log('page_loaded=', payload.checks?.page_loaded);
           console.log('artist_mode_ready=', payload.checks?.artist_mode_ready);
@@ -135,6 +153,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: go-live-hosted-interactive-smoke-${{ github.run_id }}
+          name: go-live-hosted-interactive-smoke-${{ env.TARGET_LABEL }}-${{ github.run_id }}
           path: recommendation_app/go-live/code/prod/.artifacts/
           include-hidden-files: true

@@ -15,6 +15,14 @@ on:
         description: "App variant to deploy: developer or lighter"
         required: false
         default: "developer"
+      cloud_run_service_override:
+        description: "Optional Cloud Run service override for isolated deploys"
+        required: false
+        default: ""
+      public_base_url:
+        description: "Optional public base URL override for smoke checks"
+        required: false
+        default: ""
 
 concurrency:
   group: go-live-cloud-run-deploy
@@ -45,6 +53,8 @@ jobs:
       LANGSMITH_API_URL: ${{ vars.LANGSMITH_API_URL }}
       LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
       APP_VARIANT: ${{ github.event.inputs.app_variant || 'developer' }}
+      CLOUD_RUN_SERVICE_OVERRIDE: ${{ github.event.inputs.cloud_run_service_override || '' }}
+      PUBLIC_BASE_URL_OVERRIDE: ${{ github.event.inputs.public_base_url || '' }}
 
     steps:
       - name: Checkout
@@ -97,6 +107,17 @@ jobs:
             exit 1
           fi
 
+      - name: Resolve deploy service
+        id: service_meta
+        run: |
+          set -euo pipefail
+          SERVICE_NAME="${CLOUD_RUN_SERVICE_OVERRIDE}"
+          if [ -z "${SERVICE_NAME}" ]; then
+            SERVICE_NAME="${CLOUD_RUN_SERVICE}"
+          fi
+          echo "service_name=${SERVICE_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "service_name=${SERVICE_NAME}"
+
       - name: Configure Docker auth
         run: |
           set -euo pipefail
@@ -137,7 +158,7 @@ jobs:
             echo "LANGSMITH_API_URL: \"${LANGSMITH_API_URL}\""
             echo "LANGSMITH_API_KEY: \"${LANGSMITH_API_KEY}\""
           } > "${ENV_FILE}"
-          gcloud run deploy "${CLOUD_RUN_SERVICE}" \
+          gcloud run deploy "${{ steps.service_meta.outputs.service_name }}" \
             --image "${IMAGE_URI}" \
             --region "${GCP_REGION}" \
             --platform managed \
@@ -157,20 +178,23 @@ jobs:
         run: |
           set -euo pipefail
           SERVICE_JSON="$(mktemp)"
-          gcloud run services describe "${CLOUD_RUN_SERVICE}" --region "${GCP_REGION}" --format=json > "${SERVICE_JSON}"
+          gcloud run services describe "${{ steps.service_meta.outputs.service_name }}" --region "${GCP_REGION}" --format=json > "${SERVICE_JSON}"
           URL="$(jq -r '.status.url // ""' "${SERVICE_JSON}")"
           REVISION="$(jq -r '.status.latestReadyRevisionName // ""' "${SERVICE_JSON}")"
           MEMORY="$(jq -r '.spec.template.spec.containers[0].resources.limits.memory // ""' "${SERVICE_JSON}")"
           CONCURRENCY="$(jq -r '.spec.template.spec.containerConcurrency // ""' "${SERVICE_JSON}")"
           SESSION_AFFINITY="$(jq -r '.spec.template.metadata.annotations["run.googleapis.com/sessionAffinity"] // ""' "${SERVICE_JSON}")"
-          PUBLIC_URL="${APP_BASE_URL}"
+          PUBLIC_URL="${PUBLIC_BASE_URL_OVERRIDE}"
+          if [ -z "${PUBLIC_URL}" ] && [ "${{ steps.service_meta.outputs.service_name }}" = "${CLOUD_RUN_SERVICE}" ]; then
+            PUBLIC_URL="${APP_BASE_URL}"
+          fi
           if [ -z "${PUBLIC_URL}" ]; then
             PUBLIC_URL="${URL}"
           fi
           echo "url=${URL}" >> "${GITHUB_OUTPUT}"
           echo "public_url=${PUBLIC_URL}" >> "${GITHUB_OUTPUT}"
           echo "revision=${REVISION}" >> "${GITHUB_OUTPUT}"
-          echo "service=${CLOUD_RUN_SERVICE}"
+          echo "service=${{ steps.service_meta.outputs.service_name }}"
           echo "app_variant=${APP_VARIANT}"
           echo "image=${IMAGE_URI}"
           echo "url=${URL}"
