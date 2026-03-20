@@ -23,6 +23,9 @@ import application_v2 as app_v2  # type: ignore  # noqa: E402
 
 
 base_app = app_v2.base_app
+_ORIGINAL_MAIN = base_app.main
+_ORIGINAL_BUILD_PLAYABLE_YOUTUBE_IDS = base_app.build_playable_youtube_ids
+_ORIGINAL_RENDER_MODERN_DEBUG_TABLE = base_app.render_modern_debug_table
 
 
 @base_app.st.cache_data(show_spinner=False)
@@ -99,6 +102,46 @@ def get_seed_ui_options_phase2(data: pd.DataFrame) -> tuple[list[str], list[str]
     return song_options, artist_options, quick_top_songs, quick_top_artists
 
 
+def _current_render_count() -> int:
+    return int(base_app.st.session_state.get("_go_live_render_count", 0) or 0)
+
+
+def build_playable_youtube_ids_phase2(*args: Any, **kwargs: Any):
+    if _current_render_count() <= 1:
+        queue = args[0] if args else kwargs.get("queue")
+        target_rows = min(len(queue), int(kwargs.get("max_ids", 50) or 50)) if isinstance(queue, pd.DataFrame) else 0
+        return (
+            [],
+            {
+                "playable_count": 0,
+                "playable_linked_rows": 0,
+                "target_rows": target_rows,
+                "included_direct": 0,
+                "included_resolved": 0,
+                "resolver_attempted": 0,
+                "resolver_resolved": 0,
+                "duplicate_rows": 0,
+                "unresolved_rows": target_rows,
+                "budget_blocked_rows": 0,
+                "resolve_budget": int(kwargs.get("max_live_resolves", 0) or 0),
+                "row_diagnostics": [],
+            },
+        )
+    return _ORIGINAL_BUILD_PLAYABLE_YOUTUBE_IDS(*args, **kwargs)
+
+
+def render_modern_debug_table_phase2(playlist: pd.DataFrame) -> None:
+    if _current_render_count() <= 1:
+        base_app.st.caption("Recommendation Debug View loads after the first interaction.")
+        return
+    _ORIGINAL_RENDER_MODERN_DEBUG_TABLE(playlist)
+
+
+def main_phase2() -> None:
+    base_app.st.session_state["_go_live_render_count"] = _current_render_count() + 1
+    _ORIGINAL_MAIN()
+
+
 def patch_base_app_for_phase2() -> None:
     app_v2.patch_base_app_for_v2()
     base_app.DEFAULT_DATASET_ID = "managed://latest"
@@ -108,6 +151,9 @@ def patch_base_app_for_phase2() -> None:
     base_app.recommend_tracks_cached = recommend_tracks_phase2
     base_app.build_duration_playlist_cached = build_duration_playlist_phase2
     base_app.get_seed_ui_options = get_seed_ui_options_phase2
+    base_app.build_playable_youtube_ids = build_playable_youtube_ids_phase2
+    base_app.render_modern_debug_table = render_modern_debug_table_phase2
+    base_app.main = main_phase2
 
 
 if __name__ == "__main__":
