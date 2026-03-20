@@ -53,6 +53,27 @@ async function attachNetworkGuards(page, failureBucket) {
   });
 }
 
+async function prewarmApp(browser) {
+  const requestFailures = [];
+  const context = await browser.newContext({
+    viewport: { width: 1440, height: 1600 },
+    serviceWorkers: 'block',
+  });
+  const page = await context.newPage();
+  await attachNetworkGuards(page, requestFailures);
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await sleep(3000);
+  } catch (error) {
+    console.warn(`prewarm_failed: ${String(error?.message || error)}`);
+  } finally {
+    await context.close().catch(() => {});
+  }
+}
+
 async function runSession(browser, sessionId) {
   const startedAt = Date.now();
   const requestFailures = [];
@@ -130,6 +151,9 @@ const browser = await chromium.launch({
   headless: true,
   args: ['--disable-dev-shm-usage'],
 });
+
+await prewarmApp(browser);
+await sleep(2000);
 
 const waveResults = [];
 for (let wave = 1; wave <= WAVES; wave += 1) {
