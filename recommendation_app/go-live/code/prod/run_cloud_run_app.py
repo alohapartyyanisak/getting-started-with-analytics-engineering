@@ -21,10 +21,19 @@ def main() -> int:
     emit_app_boot_trace()
 
     port = str(os.getenv("PORT", "8080") or "8080").strip() or "8080"
+    app_entrypoint = (
+        str(
+            os.getenv(
+                "GO_LIVE_APP_ENTRYPOINT",
+                "recommendation_app/go-live/code/application_phase2.py",
+            )
+        ).strip()
+        or "recommendation_app/go-live/code/application_phase2.py"
+    )
     cmd = [
         "streamlit",
         "run",
-        "recommendation_app/go-live/code/application_phase2.py",
+        app_entrypoint,
         "--server.address=0.0.0.0",
         f"--server.port={port}",
         "--server.headless=true",

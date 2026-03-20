@@ -11,6 +11,10 @@ on:
         description: "Deploy environment label"
         required: false
         default: "staging"
+      app_variant:
+        description: "App variant to deploy: developer or lighter"
+        required: false
+        default: "developer"
 
 concurrency:
   group: go-live-cloud-run-deploy
@@ -40,6 +44,7 @@ jobs:
       LANGSMITH_PROJECT: ${{ vars.LANGSMITH_PROJECT }}
       LANGSMITH_API_URL: ${{ vars.LANGSMITH_API_URL }}
       LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
+      APP_VARIANT: ${{ github.event.inputs.app_variant || 'developer' }}
 
     steps:
       - name: Checkout
@@ -87,6 +92,10 @@ jobs:
           if [ -z "${CLOUD_RUN_CONCURRENCY}" ]; then
             CLOUD_RUN_CONCURRENCY="1"
           fi
+          if [ "${APP_VARIANT}" != "developer" ] && [ "${APP_VARIANT}" != "lighter" ]; then
+            echo "Unsupported APP_VARIANT=${APP_VARIANT}" >&2
+            exit 1
+          fi
 
       - name: Configure Docker auth
         run: |
@@ -113,10 +122,15 @@ jobs:
         run: |
           set -euo pipefail
           ENV_FILE="$(mktemp)"
+          APP_ENTRYPOINT="recommendation_app/go-live/code/application_phase2.py"
+          if [ "${APP_VARIANT}" = "lighter" ]; then
+            APP_ENTRYPOINT="recommendation_app/go-live/code/prod/application_phase2_lighter_UI.py"
+          fi
           {
             echo "GCS_DATASET_URI: \"${GCS_DATASET_URI}\""
             echo "GO_LIVE_SYNC_FROM_GCS: \"true\""
             echo "GO_LIVE_DATASET_STORAGE_ROOT: \"${GO_LIVE_DATASET_STORAGE_ROOT}\""
+            echo "GO_LIVE_APP_ENTRYPOINT: \"${APP_ENTRYPOINT}\""
             echo "GO_LIVE_APP_TRACE_ENABLED: \"true\""
             echo "GO_LIVE_TRACE_ENVIRONMENT: \"${{ github.event.inputs.deploy_environment }}\""
             echo "LANGSMITH_PROJECT: \"${LANGSMITH_PROJECT}\""
@@ -157,6 +171,7 @@ jobs:
           echo "public_url=${PUBLIC_URL}" >> "${GITHUB_OUTPUT}"
           echo "revision=${REVISION}" >> "${GITHUB_OUTPUT}"
           echo "service=${CLOUD_RUN_SERVICE}"
+          echo "app_variant=${APP_VARIANT}"
           echo "image=${IMAGE_URI}"
           echo "url=${URL}"
           echo "public_url=${PUBLIC_URL}"
