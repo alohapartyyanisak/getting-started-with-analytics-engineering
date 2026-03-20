@@ -122,7 +122,7 @@ jobs:
         run: |
           node - <<'JS'
           const fs = require('fs');
-          const path = 'recommendation_app/go-live/code/prod/hosted_capacity_check_result.json';
+          const path = 'recommendation_app/go-live/code/prod/.artifacts/hosted_capacity_check_result.json';
           if (!fs.existsSync(path)) {
             console.log('hosted_capacity_check_result.json is missing');
             process.exit(0);
