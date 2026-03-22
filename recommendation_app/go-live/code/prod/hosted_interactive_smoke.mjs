@@ -12,6 +12,7 @@ const ARTISTS = String(process.env.SMOKE_ARTISTS || 'Ed Sheeran|Bruno Mars')
   .filter(Boolean);
 const MAX_ATTEMPTS = Math.max(1, Number.parseInt(process.env.SMOKE_MAX_ATTEMPTS || '1', 10) || 1);
 const SMOKE_SERIES_ID = String(process.env.SMOKE_SERIES_ID || '').trim();
+const SMOKE_PROFILE = String(process.env.SMOKE_PROFILE || 'developer').trim().toLowerCase();
 const eventLog = {
   console: [],
   page_errors: [],
@@ -329,6 +330,97 @@ async function waitForPlaylistGenerationOutcome(page) {
   };
 }
 
+async function waitForLighterReady(page) {
+  await page.waitForFunction(
+    () => {
+      const bodyText = document.body?.innerText || '';
+      return (
+        bodyText.includes('DJ Mixing Station Studio') &&
+        bodyText.includes('Choose your move') &&
+        bodyText.includes('Playable Playlist') &&
+        bodyText.includes('Now Playing') &&
+        bodyText.includes('Build Temporary YouTube Playlist')
+      );
+    },
+    null,
+    { timeout: 30000 },
+  );
+}
+
+async function runDeveloperFlow(page, attempt) {
+  const reloadedForHydration = await waitForHydratedInteractiveControls(page);
+  if (reloadedForHydration) {
+    attempt.checks.reloaded_for_hydration = true;
+  }
+
+  attempt.dom_debug = await page.evaluate(() => ({
+    stRadioCount: document.querySelectorAll('div[data-testid="stRadio"]').length,
+    ariaRadioGroupCount: document.querySelectorAll('[role="radiogroup"]').length,
+    basewebRadioCount: document.querySelectorAll('label[data-baseweb="radio"]').length,
+    ariaRadioCount: document.querySelectorAll('[role="radio"]').length,
+    inputRadioCount: document.querySelectorAll('input[type="radio"]').length,
+    radioLabels: Array.from(document.querySelectorAll('label[data-baseweb="radio"]'))
+      .slice(0, 12)
+      .map((label) => ({
+        text: (label.textContent || '').trim(),
+        checked: Boolean(label.querySelector('input[type="radio"]')?.checked),
+      })),
+  }));
+
+  await switchToArtistMode(page);
+  attempt.checks.artist_mode_ready = true;
+
+  await switchToYouTubePlatform(page);
+  attempt.checks.youtube_platform_selected = true;
+
+  await switchToArtistMode(page);
+  attempt.checks.artist_mode_reconfirmed = true;
+
+  for (let idx = 0; idx < ARTISTS.length; idx += 1) {
+    await chooseArtist(page, ARTISTS[idx], idx + 1);
+  }
+  attempt.checks.artist_selection_persists = true;
+
+  await waitForFinalPickCount(page, ARTISTS.length);
+  attempt.checks.final_pick_box_updated = true;
+
+  await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
+  attempt.checks.playable_playlist_visible = true;
+
+  const playlistOutcome = await waitForPlaylistGenerationOutcome(page);
+  attempt.checks.temp_playlist_link_visible = playlistOutcome.tempLinkVisible;
+  attempt.checks.temp_playlist_outcome_visible = Boolean(
+    playlistOutcome.tempLinkVisible ||
+    playlistOutcome.insufficientIdsVisible ||
+    playlistOutcome.coverageVisible,
+  );
+}
+
+async function runLighterFlow(page, attempt) {
+  await waitForLighterReady(page);
+  attempt.checks.lighter_ready = true;
+
+  const lighterDebug = await page.evaluate(() => {
+    const bodyText = document.body?.innerText || '';
+    const selectLabels = Array.from(document.querySelectorAll('label')).map((label) => (label.textContent || '').trim()).filter(Boolean);
+    const buttonTexts = Array.from(document.querySelectorAll('button')).map((button) => (button.textContent || '').trim()).filter(Boolean);
+    return {
+      bodyHasHero: bodyText.includes('DJ Mixing Station Studio'),
+      bodyHasChooseMove: bodyText.includes('Choose your move'),
+      bodyHasPlayablePlaylist: bodyText.includes('Playable Playlist'),
+      bodyHasNowPlaying: bodyText.includes('Now Playing'),
+      bodyHasBuildTempPlaylist: bodyText.includes('Build Temporary YouTube Playlist'),
+      hiddenStartupHealth: (document.querySelector('[data-testid="startup-health-status"]')?.textContent || '').trim(),
+      selectLabels: selectLabels.slice(0, 12),
+      buttonTexts: buttonTexts.slice(0, 20),
+    };
+  });
+  attempt.dom_debug = lighterDebug;
+  attempt.checks.playable_playlist_visible = Boolean(lighterDebug.bodyHasPlayablePlaylist);
+  attempt.checks.now_playing_visible = Boolean(lighterDebug.bodyHasNowPlaying);
+  attempt.checks.temp_playlist_button_visible = Boolean(lighterDebug.bodyHasBuildTempPlaylist);
+}
+
 async function chooseArtist(page, artistName, expectedCount) {
   const quickChip = page.getByRole('button', { name: artistName }).first();
   await quickChip.waitFor({ state: 'visible', timeout: 15000 });
@@ -362,53 +454,11 @@ async function runAttempt(attemptNumber) {
 
     await waitForBasePage(page);
     attempt.checks.page_loaded = true;
-
-    const reloadedForHydration = await waitForHydratedInteractiveControls(page);
-    if (reloadedForHydration) {
-      attempt.checks.reloaded_for_hydration = true;
+    if (SMOKE_PROFILE === 'lighter') {
+      await runLighterFlow(page, attempt);
+    } else {
+      await runDeveloperFlow(page, attempt);
     }
-
-    attempt.dom_debug = await page.evaluate(() => ({
-      stRadioCount: document.querySelectorAll('div[data-testid="stRadio"]').length,
-      ariaRadioGroupCount: document.querySelectorAll('[role="radiogroup"]').length,
-      basewebRadioCount: document.querySelectorAll('label[data-baseweb="radio"]').length,
-      ariaRadioCount: document.querySelectorAll('[role="radio"]').length,
-      inputRadioCount: document.querySelectorAll('input[type="radio"]').length,
-      radioLabels: Array.from(document.querySelectorAll('label[data-baseweb="radio"]'))
-        .slice(0, 12)
-        .map((label) => ({
-          text: (label.textContent || '').trim(),
-          checked: Boolean(label.querySelector('input[type="radio"]')?.checked),
-        })),
-    }));
-
-    await switchToArtistMode(page);
-    attempt.checks.artist_mode_ready = true;
-
-    await switchToYouTubePlatform(page);
-    attempt.checks.youtube_platform_selected = true;
-
-    await switchToArtistMode(page);
-    attempt.checks.artist_mode_reconfirmed = true;
-
-    for (let idx = 0; idx < ARTISTS.length; idx += 1) {
-      await chooseArtist(page, ARTISTS[idx], idx + 1);
-    }
-    attempt.checks.artist_selection_persists = true;
-
-    await waitForFinalPickCount(page, ARTISTS.length);
-    attempt.checks.final_pick_box_updated = true;
-
-    await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
-    attempt.checks.playable_playlist_visible = true;
-
-    const playlistOutcome = await waitForPlaylistGenerationOutcome(page);
-    attempt.checks.temp_playlist_link_visible = playlistOutcome.tempLinkVisible;
-    attempt.checks.temp_playlist_outcome_visible = Boolean(
-      playlistOutcome.tempLinkVisible ||
-      playlistOutcome.insufficientIdsVisible ||
-      playlistOutcome.coverageVisible,
-    );
 
     attempt.status = 'pass';
     await browser?.close();
@@ -429,6 +479,7 @@ const result = {
   status: 'fail',
   app_url: APP_URL,
   artists: ARTISTS,
+  smoke_profile: SMOKE_PROFILE,
   max_attempts: MAX_ATTEMPTS,
   smoke_series_id: SMOKE_SERIES_ID || null,
   attempts: [],

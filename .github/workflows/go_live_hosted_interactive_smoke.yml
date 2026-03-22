@@ -15,6 +15,10 @@ on:
         description: "Short label for artifact naming, e.g. developer or lighter"
         required: false
         default: "developer"
+      smoke_profile:
+        description: "Smoke profile: developer or lighter"
+        required: false
+        default: "developer"
       artists:
         description: "Pipe-delimited artist seeds to add during smoke"
         required: false
@@ -43,6 +47,7 @@ jobs:
       APP_URL_INPUT: ${{ github.event.inputs.app_url || '' }}
       CLOUD_RUN_SERVICE_OVERRIDE: ${{ github.event.inputs.cloud_run_service_override || '' }}
       TARGET_LABEL: ${{ github.event.inputs.target_label || 'developer' }}
+      SMOKE_PROFILE: ${{ github.event.inputs.smoke_profile || 'developer' }}
       SMOKE_ARTISTS: ${{ github.event.inputs.artists || 'Ed Sheeran|Bruno Mars' }}
       SMOKE_SERIES_ID: gcp-smoke-${{ github.run_id }}-${{ github.run_attempt }}
 
@@ -97,7 +102,7 @@ jobs:
           gcloud builds submit \
             --project "${GCP_PROJECT_ID}" \
             --config cloudbuild.hosted_interactive_smoke.yaml \
-            --substitutions "_APP_URL=${APP_URL},_SMOKE_ARTISTS=${SMOKE_ARTISTS},_SMOKE_SERIES_ID=${SMOKE_SERIES_ID}" \
+            --substitutions "_APP_URL=${APP_URL},_SMOKE_ARTISTS=${SMOKE_ARTISTS},_SMOKE_SERIES_ID=${SMOKE_SERIES_ID},_SMOKE_PROFILE=${SMOKE_PROFILE}" \
             . | tee recommendation_app/go-live/code/prod/.artifacts/cloudbuild_hosted_interactive_smoke.log
 
       - name: Extract hosted interactive smoke result from Cloud Build log
@@ -140,6 +145,7 @@ jobs:
           console.log('app_url=', payload.app_url);
           console.log('service_name=', process.env.SERVICE_NAME || '');
           console.log('target_label=', process.env.TARGET_LABEL || '');
+          console.log('smoke_profile=', payload.smoke_profile);
           console.log('artists=', (payload.artists || []).join(', '));
           console.log('page_loaded=', payload.checks?.page_loaded);
           console.log('artist_mode_ready=', payload.checks?.artist_mode_ready);
