@@ -161,6 +161,20 @@ def _render_player_section(queue: pd.DataFrame) -> None:
     selected_position = base_app.st.slider("Now Playing", 1, int(len(queue)), 1)
     playback_platform = base_app.st.radio("Playback", options=["Auto", "Spotify", "YouTube"], horizontal=True)
 
+    current_signature = f"{selected_position}:{playback_platform}"
+    if base_app.st.session_state.get("lighter_player_signature") != current_signature:
+        base_app.st.session_state["lighter_player_signature"] = current_signature
+        if "lighter_player_open" not in base_app.st.session_state:
+            base_app.st.session_state["lighter_player_open"] = False
+
+    open_requested = base_app.st.button("Open Player", key="lighter_open_player_button")
+    if open_requested:
+        base_app.st.session_state["lighter_player_open"] = True
+
+    if not base_app.st.session_state.get("lighter_player_open", False):
+        base_app.st.caption("Player loads only when you open it.")
+        return
+
     selected_row = queue.loc[queue["position"] == selected_position].iloc[0]
     selected_spotify = str(selected_row["spotify_url"]).strip()
     selected_youtube, selected_youtube_watch = base_app.resolve_playback_youtube_targets(selected_row)
