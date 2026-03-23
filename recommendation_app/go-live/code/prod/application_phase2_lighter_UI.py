@@ -150,9 +150,23 @@ def _render_hidden_startup_health(status: str) -> None:
 
 
 def _render_queue_table(queue: pd.DataFrame) -> None:
-    preview = queue[["position", "artist", "track", "duration_text"]].copy()
-    preview.columns = ["#", "Artist", "Song", "Time"]
-    base_app.st.table(preview)
+    lines: list[str] = []
+    for row in queue.itertuples(index=False):
+        spotify_url = str(getattr(row, "spotify_url", "") or "").strip()
+        youtube_url = str(getattr(row, "youtube_url", "") or "").strip()
+        parts = [
+            f"**{int(getattr(row, 'position')):02d}. {getattr(row, 'artist')} - {getattr(row, 'track')}**",
+            f"`{getattr(row, 'duration_text')}`",
+        ]
+        link_parts: list[str] = []
+        if spotify_url:
+            link_parts.append(f"[Spotify]({spotify_url})")
+        if youtube_url:
+            link_parts.append(f"[YouTube]({youtube_url})")
+        if link_parts:
+            parts.append(" · ".join(link_parts))
+        lines.append(" · ".join(parts))
+    base_app.st.markdown("\n\n".join(lines))
 
 
 def _render_player_section(queue: pd.DataFrame) -> None:
@@ -198,19 +212,19 @@ def _render_player_section(queue: pd.DataFrame) -> None:
             base_app.st.info("YouTube embed unavailable for this track. Falling back to Spotify player.")
             _render_spotify_embed(selected_spotify_track_id)
         elif selected_youtube:
-            base_app.st.info("No direct YouTube video ID available for embed. Use the YouTube link in the table.")
+            base_app.st.info("No direct YouTube video ID available for embed. Use the YouTube link in the playlist.")
     elif playback_platform == "Spotify":
         if selected_spotify_track_id:
             _render_spotify_embed(selected_spotify_track_id)
         elif selected_spotify:
-            base_app.st.info("No direct Spotify track ID available for embed. Use the Spotify link in the table.")
+            base_app.st.info("No direct Spotify track ID available for embed. Use the Spotify link in the playlist.")
     else:
         if selected_youtube_watch:
             base_app.st.video(selected_youtube_watch)
         elif selected_spotify_track_id:
             _render_spotify_embed(selected_spotify_track_id)
         elif selected_youtube:
-            base_app.st.info("Use the YouTube link in the table for this track.")
+            base_app.st.info("Use the YouTube link in the playlist for this track.")
 
 
 def _render_temp_playlist_section(queue: pd.DataFrame, queue_signature: str) -> None:
