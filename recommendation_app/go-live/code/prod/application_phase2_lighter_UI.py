@@ -108,6 +108,18 @@ def patch_base_app_for_phase2_lighter() -> None:
     base_app.get_seed_ui_options = get_seed_ui_options_phase2
 
 
+def _render_seed_choice_chips(label: str, options: list[str], state_key: str) -> None:
+    base_app.st.caption(label)
+    clicked = base_app.render_toggle_chips(
+        options,
+        selected_values=list(base_app.st.session_state[state_key]),
+        key_prefix=f"lighter_{state_key}",
+        min_chips=5,
+    )
+    if clicked:
+        base_app._toggle_seed_selection(state_key, clicked, base_app.MAX_SEED_SELECTIONS)
+
+
 def _queue_signature(queue: pd.DataFrame, mood: str, target_minutes: int) -> str:
     payload = "|".join(
         queue.get("queue_label", pd.Series(dtype=str)).astype(str).tolist()
@@ -299,20 +311,71 @@ def main() -> None:
 
     _render_hidden_startup_health("Healthy")
 
-    seed_weights, experience_state = base_app.render_seed_experience(data)
+    base_app._init_seed_selection_state(data)
+    song_options, artist_options, quick_top_songs, quick_top_artists = get_seed_ui_options_phase2(data)
+
+    base_app.st.markdown('<div class="action-title">Choose your move</div>', unsafe_allow_html=True)
+    experience_mode = base_app.st.radio(
+        "Mix Mode",
+        options=["Quick Mode", "Self Mix"],
+        key="lighter_experience_mode",
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+    if experience_mode == "Quick Mode":
+        selected_quick_vibe = base_app.st.radio(
+            "Vibe Options",
+            options=list(base_app.PERSONALITY_PROFILES.keys()),
+            key="lighter_quick_vibe_option",
+            horizontal=True,
+        )
+        vibe_seed, vibe_description = base_app.personality_seed_option(data, selected_quick_vibe)
+        base_app.st.caption(vibe_description)
+        seed_weights = {str(vibe_seed): 1.0}
+        experience_state = {"experience_mode": "Quick Mode", "quick_vibe": selected_quick_vibe}
+    else:
+        start_mode = base_app.st.radio(
+            "How to Start",
+            options=["Pick Songs", "Pick Artists", "Surprise Me"],
+            key="lighter_start_mode",
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+        if start_mode == "Pick Songs":
+            _render_seed_choice_chips("Quick top songs", quick_top_songs, "selected_seed_songs")
+        elif start_mode == "Pick Artists":
+            _render_seed_choice_chips("Quick top artists", quick_top_artists, "selected_seed_artists")
+        else:
+            if "lighter_surprise_counter" not in base_app.st.session_state:
+                base_app.st.session_state["lighter_surprise_counter"] = 0
+            if "lighter_surprise_seed_track" not in base_app.st.session_state:
+                base_app.st.session_state["lighter_surprise_seed_track"] = ""
+            if base_app.st.button("Spin Random Song", key="lighter_surprise_seed_button") or not base_app.st.session_state["lighter_surprise_seed_track"]:
+                base_app.st.session_state["lighter_surprise_counter"] += 1
+                candidates = data.sort_values(["momentum_score", "views", "stream"], ascending=False).head(250)
+                picked_seed = candidates.sample(1, random_state=9000 + base_app.st.session_state["lighter_surprise_counter"]).iloc[0]["display_name"]
+                base_app.st.session_state["lighter_surprise_seed_track"] = str(picked_seed)
+            base_app.st.success(f"Random starter: {base_app.st.session_state['lighter_surprise_seed_track']}")
+
+        seed_weights = base_app._build_seed_weights_from_state(data)
+        if start_mode == "Surprise Me":
+            seed_weights = {str(base_app.st.session_state["lighter_surprise_seed_track"]): 1.0}
+        if not seed_weights:
+            seed_weights = {base_app._default_seed_track(data): 1.0}
+        experience_state = {"experience_mode": "Self Mix", "start_mode": start_mode}
 
     with base_app.st.sidebar:
         base_app.st.header("Recommendation Controls")
         if experience_state.get("experience_mode") == "Quick Mode":
-            selected_quick_vibe = str(experience_state.get("quick_vibe", "Focus Flow"))
             quick_defaults = base_app.QUICK_VIBE_DEFAULTS.get(
-                selected_quick_vibe,
+                str(experience_state.get("quick_vibe", "Focus Flow")),
                 base_app.QUICK_VIBE_DEFAULTS["Focus Flow"],
             )
-            if base_app.st.session_state.get("quick_vibe_applied") != selected_quick_vibe:
+            if base_app.st.session_state.get("quick_vibe_applied") != experience_state.get("quick_vibe"):
                 base_app.st.session_state["quick_spotify_weight_pct"] = int(quick_defaults["spotify_weight_pct"])
                 base_app.st.session_state["quick_discovery_hits_pct"] = int(quick_defaults["discovery_hits_pct"])
-                base_app.st.session_state["quick_vibe_applied"] = selected_quick_vibe
+                base_app.st.session_state["quick_vibe_applied"] = experience_state.get("quick_vibe")
 
             mood = str(quick_defaults["mood"])
             spotify_weight_pct = base_app.st.slider("Platform Bias", 0, 100, key="quick_spotify_weight_pct")
@@ -322,11 +385,12 @@ def main() -> None:
             hidden_gems_pct = 100 - discovery_hits_pct
             base_app.st.caption(f"Hits ({discovery_hits_pct}%) <- -> Hidden Gems ({hidden_gems_pct}%)")
         else:
-            self_mix_vibe = base_app.st.selectbox(
+            self_mix_vibe = base_app.st.radio(
                 "Vibe Options",
                 options=list(base_app.PERSONALITY_PROFILES.keys()),
                 index=0,
-                key="self_mix_vibe_option",
+                key="lighter_self_mix_vibe_option",
+                horizontal=True,
             )
             mood = str(base_app.QUICK_VIBE_DEFAULTS.get(self_mix_vibe, base_app.QUICK_VIBE_DEFAULTS["Focus Flow"])["mood"])
             if "spotify_weight_pct" not in base_app.st.session_state:
