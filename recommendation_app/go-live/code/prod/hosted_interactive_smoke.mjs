@@ -337,9 +337,7 @@ async function waitForLighterReady(page) {
       return (
         bodyText.includes('DJ Mixing Station Studio') &&
         bodyText.includes('Choose your move') &&
-        bodyText.includes('Playable Playlist') &&
-        bodyText.includes('Now Playing') &&
-        bodyText.includes('Build Temporary YouTube Playlist')
+        bodyText.includes('Generate Playlist')
       );
     },
     null,
@@ -399,6 +397,25 @@ async function runDeveloperFlow(page, attempt) {
 async function runLighterFlow(page, attempt) {
   await waitForLighterReady(page);
   attempt.checks.lighter_ready = true;
+
+  const generateButton = page.getByRole('button', { name: 'Generate Playlist' }).first();
+  await generateButton.waitFor({ state: 'visible', timeout: 30000 });
+  await generateButton.click({ force: true });
+  attempt.checks.generate_clicked = true;
+
+  await page.waitForFunction(
+    () => {
+      const bodyText = document.body?.innerText || '';
+      return (
+        bodyText.includes('Playable Playlist') &&
+        bodyText.includes('Now Playing') &&
+        bodyText.includes('Build Temporary YouTube Playlist')
+      );
+    },
+    null,
+    { timeout: 30000 },
+  );
+  attempt.checks.results_rendered = true;
 
   const lighterDebug = await page.evaluate(() => {
     const bodyText = document.body?.innerText || '';

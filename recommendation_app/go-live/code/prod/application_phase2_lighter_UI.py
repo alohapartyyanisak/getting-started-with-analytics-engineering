@@ -128,6 +128,29 @@ def _queue_signature(queue: pd.DataFrame, mood: str, target_minutes: int) -> str
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
+def _generation_signature(
+    seed_weight_items: tuple[tuple[str, float], ...],
+    mood: str,
+    spotify_weight_pct: int,
+    discovery_hits_pct: int,
+    target_minutes: int,
+    preferred_artist_weight_items: tuple[tuple[str, float], ...],
+    include_seed_tracks: bool,
+) -> str:
+    payload = repr(
+        (
+            seed_weight_items,
+            mood,
+            spotify_weight_pct,
+            discovery_hits_pct,
+            target_minutes,
+            preferred_artist_weight_items,
+            include_seed_tracks,
+        )
+    )
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
 def _render_spotify_embed(track_id: str) -> None:
     embed_url = f"https://open.spotify.com/embed/track/{track_id}?utm_source=generator"
     base_app.components.html(
@@ -445,6 +468,24 @@ def main() -> None:
     if experience_state.get("experience_mode") == "Self Mix":
         preferred_artist_weight_items = tuple(sorted(base_app._build_preferred_artist_weights(data).items()))
     include_seed_tracks = discovery_hits_pct == 100
+
+    generation_signature = _generation_signature(
+        seed_weight_items=seed_weight_items,
+        mood=mood,
+        spotify_weight_pct=spotify_weight_pct,
+        discovery_hits_pct=discovery_hits_pct,
+        target_minutes=target_minutes,
+        preferred_artist_weight_items=preferred_artist_weight_items,
+        include_seed_tracks=include_seed_tracks,
+    )
+
+    generate_clicked = base_app.st.button("Generate Playlist", key="lighter_generate_playlist_button", use_container_width=True)
+    if generate_clicked:
+        base_app.st.session_state["lighter_generated_signature"] = generation_signature
+
+    if base_app.st.session_state.get("lighter_generated_signature") != generation_signature:
+        base_app.st.caption("Choose your inputs, then generate the playlist.")
+        base_app.st.stop()
 
     recommendations = recommend_tracks_phase2(
         data=data,
