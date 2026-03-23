@@ -144,8 +144,14 @@ jobs:
           set -euo pipefail
           ENV_FILE="$(mktemp)"
           APP_ENTRYPOINT="recommendation_app/go-live/code/application_phase2.py"
+          DEPLOY_MEMORY="${CLOUD_RUN_MEMORY:-2Gi}"
+          DEPLOY_CONCURRENCY="${CLOUD_RUN_CONCURRENCY:-1}"
+          DEPLOY_MIN_INSTANCES="3"
+          DEPLOY_MAX_INSTANCES="3"
           if [ "${APP_VARIANT}" = "lighter" ]; then
             APP_ENTRYPOINT="recommendation_app/go-live/code/prod/application_phase2_lighter_UI.py"
+            DEPLOY_CONCURRENCY="20"
+            DEPLOY_MAX_INSTANCES="10"
           fi
           {
             echo "GCS_DATASET_URI: \"${GCS_DATASET_URI}\""
@@ -164,8 +170,10 @@ jobs:
             --platform managed \
             --allow-unauthenticated \
             --service-account "${GCP_SERVICE_ACCOUNT}" \
-            --memory "${CLOUD_RUN_MEMORY:-2Gi}" \
-            --concurrency "${CLOUD_RUN_CONCURRENCY:-1}" \
+            --memory "${DEPLOY_MEMORY}" \
+            --concurrency "${DEPLOY_CONCURRENCY}" \
+            --min-instances "${DEPLOY_MIN_INSTANCES}" \
+            --max-instances "${DEPLOY_MAX_INSTANCES}" \
             --cpu-boost \
             --session-affinity \
             --env-vars-file "${ENV_FILE}" \
