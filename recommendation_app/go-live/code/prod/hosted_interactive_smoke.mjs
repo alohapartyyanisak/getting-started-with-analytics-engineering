@@ -116,11 +116,21 @@ async function waitForBasePage(page) {
     }
     await sleep(4000);
 
-    const ready = await Promise.all([
+    const readyChecks = [
       waitForStartupHealthReady(page, 35000).then(() => true).catch(() => false),
-      page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
       page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
-    ]);
+    ];
+    if (SMOKE_PROFILE === 'lighter') {
+      readyChecks.push(
+        page.getByRole('button', { name: 'Generate Playlist' }).first().waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
+      );
+    } else {
+      readyChecks.push(
+        page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
+      );
+    }
+
+    const ready = await Promise.all(readyChecks);
     if (ready.every(Boolean)) {
       return;
     }
@@ -130,8 +140,12 @@ async function waitForBasePage(page) {
   }
 
   await waitForStartupHealthReady(page, 60000);
-  await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
   await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+  if (SMOKE_PROFILE === 'lighter') {
+    await page.getByRole('button', { name: 'Generate Playlist' }).first().waitFor({ state: 'visible', timeout: 60000 });
+  } else {
+    await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+  }
 }
 
 async function waitForInteractiveControls(page) {
