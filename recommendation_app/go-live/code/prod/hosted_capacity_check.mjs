@@ -37,6 +37,45 @@ function shouldBlockRequest(url) {
   ].some((needle) => url.includes(needle));
 }
 
+async function waitForStartupHealthReady(page, timeoutMs = 60000) {
+  const hiddenHealth = page.locator('[data-testid="startup-health-status"]').first();
+  const visibleHealth = page.getByText('Startup Health: Healthy', { exact: false }).first();
+
+  const hiddenReady = hiddenHealth
+    .waitFor({ state: 'attached', timeout: timeoutMs })
+    .then(async () => {
+      const text = ((await hiddenHealth.textContent()) || '').trim();
+      if (text !== 'Healthy') {
+        throw new Error(`Hidden startup health was ${text || 'empty'}`);
+      }
+      return true;
+    })
+    .catch(() => false);
+
+  const visibleReady = visibleHealth
+    .waitFor({ state: 'visible', timeout: timeoutMs })
+    .then(() => true)
+    .catch(() => false);
+
+  const results = await Promise.all([hiddenReady, visibleReady]);
+  if (!results.some(Boolean)) {
+    throw new Error(`Startup health did not become ready within ${timeoutMs}ms`);
+  }
+}
+
+async function waitForCapacityBasePage(page) {
+  await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await waitForStartupHealthReady(page, 60000);
+  await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+
+  if (CAPACITY_PROFILE === 'shell-only') {
+    await page.getByRole('button', { name: 'Generate Playlist' }).first().waitFor({ state: 'visible', timeout: 60000 });
+    return;
+  }
+
+  await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+}
+
 async function attachNetworkGuards(page, failureBucket) {
   await page.route('**/*', async (route) => {
     const request = route.request();
@@ -64,9 +103,7 @@ async function prewarmApp(browser) {
   await attachNetworkGuards(page, requestFailures);
 
   try {
-    await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
-    await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await waitForCapacityBasePage(page);
     await sleep(3000);
   } catch (error) {
     console.warn(`prewarm_failed: ${String(error?.message || error)}`);
@@ -86,10 +123,7 @@ async function runSession(browser, sessionId) {
   await attachNetworkGuards(page, requestFailures);
 
   try {
-    await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.getByText('Startup Health: Healthy', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
-    await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
-    await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await waitForCapacityBasePage(page);
     if (CAPACITY_PROFILE !== 'shell-only') {
       await page.waitForFunction(
         () => Array.from(document.querySelectorAll('label[data-baseweb="radio"]')).length >= 5,
