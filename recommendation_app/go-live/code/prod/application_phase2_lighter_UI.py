@@ -136,21 +136,6 @@ def _store_cached_queue(signature: str, queue: pd.DataFrame) -> None:
     base_app.st.session_state["public_result_queue_records"] = queue.to_dict("records")
 
 
-def _render_queue_tracklist(queue: pd.DataFrame) -> None:
-    current_position = int(base_app.st.session_state.get("public_selected_position", 1) or 1)
-    for row in queue.itertuples(index=False):
-        position = int(getattr(row, "position"))
-        play_col, text_col = base_app.st.columns([1, 10], vertical_alignment="center")
-        if play_col.button("Play", key=f"public_play_track_{position}", use_container_width=True):
-            base_app.st.session_state["public_selected_position"] = position
-            current_position = position
-        prefix = "▶ " if position == current_position else ""
-        text_col.markdown(
-            f"{prefix}**{position:02d}. {getattr(row, 'artist')} - {getattr(row, 'track')}** "
-            f"`{getattr(row, 'duration_text')}`"
-        )
-
-
 def main() -> None:
     patch_base_app_for_phase2()
 
@@ -371,20 +356,21 @@ def main() -> None:
         base_app.st.session_state.pop("public_temp_playlist_payload", None)
 
     base_app.st.subheader("Playable Playlist")
-    _render_queue_tracklist(queue)
 
-    if "public_selected_position" not in base_app.st.session_state:
-        base_app.st.session_state["public_selected_position"] = 1
-    selected_position = int(base_app.st.session_state.get("public_selected_position", 1) or 1)
-    selected_position = max(1, min(selected_position, len(queue)))
-    selected_row = queue.loc[queue["position"] == selected_position].iloc[0]
+    player_col, mode_col = base_app.st.columns([3, 2])
+    with player_col:
+        selected_label = base_app.st.selectbox("Now Playing", options=queue["queue_label"].tolist())
+    with mode_col:
+        playback_platform = base_app.st.radio("Playback", options=["Auto", "Spotify", "YouTube"], horizontal=True)
+
+    selected_row = queue.loc[queue["queue_label"] == selected_label].iloc[0]
     selected_spotify = str(selected_row["spotify_url"]).strip()
     selected_youtube, selected_youtube_watch = base_app.resolve_playback_youtube_targets(selected_row)
     selected_youtube = str(selected_youtube).strip()
     selected_youtube_watch = str(selected_youtube_watch).strip()
     selected_spotify_track_id = base_app.extract_spotify_track_id(selected_spotify)
 
-    if not selected_youtube_watch:
+    if (playback_platform in {"YouTube", "Auto"}) and not selected_youtube_watch:
         forced_link, forced_embed = base_app.resolve_playback_youtube_targets(selected_row, force_live=True, live_timeout=4)
         forced_link = str(forced_link).strip()
         forced_embed = str(forced_embed).strip()
@@ -397,14 +383,26 @@ def main() -> None:
         f'**{selected_row["artist"]} - {selected_row["track"]}** · {selected_row["duration_text"]} '
         f'· Momentum {selected_row["momentum_score"]:.3f}'
     )
-    if selected_youtube_watch:
-        phase2_app._ORIGINAL_ST_VIDEO(selected_youtube_watch)
-    elif selected_spotify_track_id:
-        _render_spotify_embed(selected_spotify_track_id)
-    elif selected_youtube:
-        base_app.st.link_button("Open Track", selected_youtube, use_container_width=False)
-    elif selected_spotify:
-        base_app.st.link_button("Open Track", selected_spotify, use_container_width=False)
+    base_app.render_track_links(selected_spotify, selected_youtube)
+
+    if playback_platform == "YouTube":
+        if selected_youtube_watch:
+            phase2_app._ORIGINAL_ST_VIDEO(selected_youtube_watch)
+        elif selected_spotify_track_id:
+            base_app.st.info("YouTube embed unavailable for this track. Falling back to Spotify player.")
+            _render_spotify_embed(selected_spotify_track_id)
+        elif selected_youtube:
+            base_app.st.info("No direct YouTube video ID available for embed. Use the YouTube button.")
+    elif playback_platform == "Spotify":
+        if selected_spotify_track_id:
+            _render_spotify_embed(selected_spotify_track_id)
+        elif selected_spotify:
+            base_app.st.info("No direct Spotify track ID available for embed. Use the Spotify button.")
+    else:
+        if selected_youtube_watch:
+            phase2_app._ORIGINAL_ST_VIDEO(selected_youtube_watch)
+        elif selected_spotify_track_id:
+            _render_spotify_embed(selected_spotify_track_id)
 
     if should_emit_request_logs:
         emit_response_sent(
