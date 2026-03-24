@@ -68,12 +68,26 @@ async function waitForCapacityBasePage(page) {
   await waitForStartupHealthReady(page, 60000);
   await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
 
-  if (CAPACITY_PROFILE === 'shell-only') {
-    await page.getByRole('button', { name: 'Generate Playlist' }).first().waitFor({ state: 'visible', timeout: 60000 });
-    return;
+  const generateButton = page.getByRole('button', { name: 'Generate Playlist' }).first();
+  const lighterShell = await generateButton
+    .waitFor({ state: 'visible', timeout: 3000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (lighterShell) {
+    if (CAPACITY_PROFILE === 'shell-only') {
+      return { app_kind: 'lighter', generated: false };
+    }
+
+    await generateButton.click({ force: true });
+    await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await page.getByText('Build Temporary YouTube Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    return { app_kind: 'lighter', generated: true };
   }
 
   await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+  return { app_kind: 'developer', generated: false };
 }
 
 async function attachNetworkGuards(page, failureBucket) {
@@ -123,8 +137,8 @@ async function runSession(browser, sessionId) {
   await attachNetworkGuards(page, requestFailures);
 
   try {
-    await waitForCapacityBasePage(page);
-    if (CAPACITY_PROFILE !== 'shell-only') {
+    const pageKind = await waitForCapacityBasePage(page);
+    if (CAPACITY_PROFILE !== 'shell-only' && pageKind.app_kind !== 'lighter') {
       await page.waitForFunction(
         () => Array.from(document.querySelectorAll('label[data-baseweb="radio"]')).length >= 5,
         null,
