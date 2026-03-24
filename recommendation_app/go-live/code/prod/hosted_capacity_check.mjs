@@ -91,8 +91,7 @@ async function waitForCapacityBasePage(page) {
       const bodyText = document.body?.innerText || '';
       return (
         bodyText.includes('Playable Playlist') &&
-        bodyText.includes('Now Playing') &&
-        bodyText.includes('Build Temporary YouTube Playlist')
+        bodyText.includes('Now Playing')
       );
     },
     null,

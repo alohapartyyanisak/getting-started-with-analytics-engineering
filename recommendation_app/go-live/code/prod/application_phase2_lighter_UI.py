@@ -14,6 +14,7 @@ if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
 import phase2_runtime_config as cfg
+import prod.application_phase2 as phase2_app
 from prod.application_phase2 import patch_base_app_for_phase2, base_app, read_source_phase2
 from prod.go_live_structured_logging import (
     emit_error,
@@ -97,7 +98,7 @@ def _generation_signature(
 
 def _render_spotify_embed(track_id: str) -> None:
     embed_url = f"https://open.spotify.com/embed/track/{track_id}?utm_source=generator"
-    base_app.components.html(
+    phase2_app._ORIGINAL_COMPONENTS_HTML(
         f'<iframe src="{embed_url}" width="100%" height="152" frameborder="0" '
         'allowfullscreen="" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"></iframe>',
         height=170,
@@ -386,7 +387,7 @@ def main() -> None:
 
     if playback_platform == "YouTube":
         if selected_youtube_watch:
-            base_app.st.video(selected_youtube_watch)
+            phase2_app._ORIGINAL_ST_VIDEO(selected_youtube_watch)
         elif selected_spotify_track_id:
             base_app.st.info("YouTube embed unavailable for this track. Falling back to Spotify player.")
             _render_spotify_embed(selected_spotify_track_id)
@@ -399,82 +400,9 @@ def main() -> None:
             base_app.st.info("No direct Spotify track ID available for embed. Use the Spotify button.")
     else:
         if selected_youtube_watch:
-            base_app.st.video(selected_youtube_watch)
+            phase2_app._ORIGINAL_ST_VIDEO(selected_youtube_watch)
         elif selected_spotify_track_id:
             _render_spotify_embed(selected_spotify_track_id)
-
-    with base_app.st.sidebar:
-        build_temp_playlist = base_app.st.button(
-            "Build Temporary YouTube Playlist",
-            use_container_width=True,
-            key="public_build_temp_playlist",
-        )
-
-    if build_temp_playlist:
-        with base_app.st.spinner("Building temporary YouTube playlist from playable URLs..."):
-            youtube_ids_result = base_app.build_playable_youtube_ids(
-                queue,
-                max_ids=50,
-                max_live_resolves=16,
-                live_timeout=3,
-                min_ids_required=2,
-                fill_to_max=False,
-                max_total_seconds=10.0,
-                return_stats=True,
-            )
-        if isinstance(youtube_ids_result, tuple):
-            youtube_ids, yt_stats = youtube_ids_result
-        else:
-            youtube_ids = youtube_ids_result
-            yt_stats = {
-                "playable_count": len(youtube_ids),
-                "playable_linked_rows": len(youtube_ids),
-                "target_rows": min(len(queue), 50),
-                "included_direct": 0,
-                "included_resolved": 0,
-                "resolver_attempted": 0,
-                "resolver_resolved": 0,
-                "duplicate_rows": 0,
-                "unresolved_rows": 0,
-                "budget_blocked_rows": 0,
-                "resolve_budget": 0,
-                "row_diagnostics": [],
-            }
-        base_app.st.session_state["public_temp_playlist_signature"] = generation_signature
-        base_app.st.session_state["public_temp_playlist_payload"] = {
-            "youtube_ids": youtube_ids,
-            "yt_stats": yt_stats,
-        }
-
-    temp_signature = base_app.st.session_state.get("public_temp_playlist_signature")
-    temp_payload = base_app.st.session_state.get("public_temp_playlist_payload")
-    if temp_signature == generation_signature and isinstance(temp_payload, dict):
-        youtube_ids = temp_payload.get("youtube_ids", [])
-        yt_stats = temp_payload.get("yt_stats", {})
-        if len(youtube_ids) >= 2:
-            temp_youtube_playlist = "https://www.youtube.com/watch_videos?video_ids=" + ",".join(youtube_ids[:50])
-            base_app.render_platform_link("Open Temporary YouTube Playlist", temp_youtube_playlist)
-        else:
-            base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
-        target_rows = int(yt_stats.get("target_rows", 0) or 0)
-        playable_rows = int(yt_stats.get("playable_count", 0) or 0)
-        linked_rows = int(yt_stats.get("playable_linked_rows", playable_rows) or playable_rows)
-        if target_rows > 0:
-            coverage_pct = (linked_rows / target_rows) * 100.0
-            duplicate_collapsed = max(0, linked_rows - playable_rows)
-            base_app.st.caption(
-                "Temporary playlist coverage: "
-                f"{linked_rows}/{target_rows} rows linked ({coverage_pct:.0f}%). "
-                f"Unique YouTube IDs: {playable_rows}. "
-                f"Direct: {int(yt_stats.get('included_direct', 0) or 0)} · "
-                f"Resolved: {int(yt_stats.get('included_resolved', 0) or 0)} · "
-                f"Resolver attempts: {int(yt_stats.get('resolver_attempted', 0) or 0)}."
-            )
-            if duplicate_collapsed > 0:
-                base_app.st.caption(f"Duplicate IDs collapsed: {duplicate_collapsed}")
-        base_app.st.session_state["_yt_playlist_row_diagnostics"] = (
-            yt_stats.get("row_diagnostics", []) if isinstance(yt_stats.get("row_diagnostics", []), list) else []
-        )
 
     if should_emit_request_logs:
         emit_response_sent(
