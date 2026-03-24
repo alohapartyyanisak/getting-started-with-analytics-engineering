@@ -136,6 +136,24 @@ def _store_cached_queue(signature: str, queue: pd.DataFrame) -> None:
     base_app.st.session_state["public_result_queue_records"] = queue.to_dict("records")
 
 
+def _render_queue_tracklist(queue: pd.DataFrame) -> None:
+    lines: list[str] = []
+    for row in queue.itertuples(index=False):
+        spotify_url = str(getattr(row, "spotify_url", "") or "").strip()
+        youtube_url = str(getattr(row, "youtube_url", "") or "").strip()
+        link_parts: list[str] = []
+        if spotify_url:
+            link_parts.append(f"[Spotify]({spotify_url})")
+        if youtube_url:
+            link_parts.append(f"[YouTube]({youtube_url})")
+        link_text = f" · {' / '.join(link_parts)}" if link_parts else ""
+        lines.append(
+            f"{int(getattr(row, 'position')):02d}. {getattr(row, 'artist')} - {getattr(row, 'track')} "
+            f"({getattr(row, 'duration_text')}){link_text}"
+        )
+    base_app.st.markdown("\n".join(f"- {line}" for line in lines))
+
+
 def main() -> None:
     patch_base_app_for_phase2()
 
@@ -356,6 +374,7 @@ def main() -> None:
         base_app.st.session_state.pop("public_temp_playlist_payload", None)
 
     base_app.st.subheader("Playable Playlist")
+    _render_queue_tracklist(queue)
 
     player_col, mode_col = base_app.st.columns([3, 2])
     with player_col:
