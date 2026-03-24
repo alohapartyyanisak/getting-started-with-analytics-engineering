@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import sys
+import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,14 @@ if str(CODE_ROOT) not in sys.path:
 
 import phase2_runtime_config as cfg
 from phase2_managed_loader import load_prepared_dataset, validate_prepared_dataset
+from prod.go_live_structured_logging import (
+    emit_error,
+    emit_playlist_optimized,
+    emit_ranking_completed,
+    emit_request_received,
+    emit_response_sent,
+    emit_seed_resolution_completed,
+)
 
 if str(cfg.OFFLINE_V2_CODE_DIR) not in sys.path:
     sys.path.insert(0, str(cfg.OFFLINE_V2_CODE_DIR))
@@ -177,6 +187,35 @@ def _generation_signature(
         )
     )
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _dataset_snapshot_id(source_path: str) -> str:
+    prefix = "managed_snapshot::"
+    text = str(source_path or "").strip()
+    if text.startswith(prefix):
+        version = text[len(prefix) :].strip()
+        if version:
+            return version
+    return str(cfg.DATASET_VERSION or "").strip() or "unknown_dataset"
+
+
+def _normalize_mode(experience_mode: str) -> str:
+    return "quick" if experience_mode == "Quick Mode" else "self_mix"
+
+
+def _normalize_start_mode(experience_state: dict[str, Any]) -> str | None:
+    if experience_state.get("experience_mode") == "Quick Mode":
+        return "quick_mode"
+    text = str(experience_state.get("start_mode", "") or "").strip().lower()
+    return text.replace(" ", "_") if text else None
+
+
+def _session_id() -> str:
+    session_id = str(base_app.st.session_state.get("lighter_session_id", "") or "").strip()
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        base_app.st.session_state["lighter_session_id"] = session_id
+    return session_id
 
 
 def _render_spotify_embed(track_id: str) -> None:
@@ -389,6 +428,8 @@ def main() -> None:
         base_app.st.stop()
 
     _render_hidden_startup_health("Healthy")
+    dataset_snapshot_id = _dataset_snapshot_id(source_path)
+    session_id = _session_id()
 
     base_app._init_seed_selection_state(data)
     song_options, artist_options, quick_top_songs, quick_top_artists = get_seed_ui_options_phase2(data)
@@ -538,31 +579,127 @@ def main() -> None:
 
     if generate_clicked:
         base_app.st.session_state["lighter_generated_signature"] = generation_signature
+        base_app.st.session_state["lighter_request_id"] = str(uuid.uuid4())
+        base_app.st.session_state["lighter_request_signature"] = generation_signature
+        base_app.st.session_state["lighter_request_log_pending"] = True
 
     if base_app.st.session_state.get("lighter_generated_signature") != generation_signature:
         base_app.st.caption("Choose your inputs, then generate the playlist.")
         base_app.st.stop()
 
-    recommendations = recommend_tracks_phase2(
-        data=data,
-        seed_weight_items=seed_weight_items,
-        mood=mood,
-        spotify_weight=spotify_weight_pct / 100.0,
-        discovery_mode=hidden_gems_pct / 100.0,
-        top_k=180,
-        exclude_seed_tracks=not include_seed_tracks,
-        preferred_artist_weight_items=preferred_artist_weight_items,
+    request_id = str(base_app.st.session_state.get("lighter_request_id", "") or "").strip()
+    should_emit_request_logs = (
+        bool(request_id)
+        and bool(base_app.st.session_state.get("lighter_request_log_pending", False))
+        and str(base_app.st.session_state.get("lighter_request_signature", "") or "") == generation_signature
     )
-    playlist = build_duration_playlist_phase2(
-        recommendations=recommendations,
-        target_minutes=target_minutes,
-        tolerance_minutes=base_app.PLAYLIST_TOLERANCE_MINUTES,
-        candidate_limit=180,
-        max_tracks=50,
-    )
+    request_started_at = time.perf_counter()
+
+    if should_emit_request_logs:
+        emit_request_received(
+            request_id=request_id,
+            session_id=session_id,
+            dataset_snapshot_id=dataset_snapshot_id,
+            mode=_normalize_mode(experience_mode),
+            start_mode=_normalize_start_mode(experience_state),
+            target_minutes=target_minutes,
+            tolerance_minutes=base_app.PLAYLIST_TOLERANCE_MINUTES,
+            platform_bias_spotify_pct=spotify_weight_pct,
+            discovery_hits_pct=discovery_hits_pct,
+            vibe_option=str(experience_state.get("quick_vibe") or base_app.st.session_state.get("lighter_self_mix_vibe_option") or ""),
+            final_pick_count=len(seed_weight_items),
+        )
+        emit_seed_resolution_completed(
+            request_id=request_id,
+            session_id=session_id,
+            dataset_snapshot_id=dataset_snapshot_id,
+            selected_artists_count=len(base_app.st.session_state.get("selected_seed_artists", [])),
+            selected_songs_count=len(base_app.st.session_state.get("selected_seed_songs", [])),
+            seed_display_names=[str(name) for name, _weight in seed_weight_items],
+            seed_artist_weights={str(name): float(weight) for name, weight in preferred_artist_weight_items},
+        )
+
+    try:
+        ranking_started_at = time.perf_counter()
+        recommendations = recommend_tracks_phase2(
+            data=data,
+            seed_weight_items=seed_weight_items,
+            mood=mood,
+            spotify_weight=spotify_weight_pct / 100.0,
+            discovery_mode=hidden_gems_pct / 100.0,
+            top_k=180,
+            exclude_seed_tracks=not include_seed_tracks,
+            preferred_artist_weight_items=preferred_artist_weight_items,
+        )
+        ranking_latency_ms = int((time.perf_counter() - ranking_started_at) * 1000)
+        if should_emit_request_logs:
+            top_display_names = recommendations.get("display_name", pd.Series(dtype=str)).astype(str).head(5).tolist()
+            emit_ranking_completed(
+                request_id=request_id,
+                session_id=session_id,
+                dataset_snapshot_id=dataset_snapshot_id,
+                candidate_pool_size=len(data),
+                ranked_count=len(recommendations),
+                top_display_names=top_display_names,
+                latency_ms=ranking_latency_ms,
+            )
+
+        playlist_started_at = time.perf_counter()
+        playlist = build_duration_playlist_phase2(
+            recommendations=recommendations,
+            target_minutes=target_minutes,
+            tolerance_minutes=base_app.PLAYLIST_TOLERANCE_MINUTES,
+            candidate_limit=180,
+            max_tracks=50,
+        )
+        playlist_latency_ms = int((time.perf_counter() - playlist_started_at) * 1000)
+    except Exception as exc:
+        if should_emit_request_logs:
+            emit_error(
+                request_id=request_id,
+                session_id=session_id,
+                dataset_snapshot_id=dataset_snapshot_id,
+                error_type=type(exc).__name__,
+                error_code="REQUEST_PIPELINE_FAILURE",
+                error_message=str(exc),
+                stage="ranking_or_playlist",
+                latency_ms=int((time.perf_counter() - request_started_at) * 1000),
+            )
+            base_app.st.session_state["lighter_request_log_pending"] = False
+        raise
+
     playlist["mood_tag"] = mood
+    if should_emit_request_logs:
+        playlist_total_seconds = int((playlist.get("duration_ms", pd.Series(dtype=int)).fillna(0).sum()) / 1000)
+        target_seconds = int(target_minutes * 60)
+        window_min_seconds = int((target_minutes - base_app.PLAYLIST_TOLERANCE_MINUTES) * 60)
+        window_max_seconds = int((target_minutes + base_app.PLAYLIST_TOLERANCE_MINUTES) * 60)
+        emit_playlist_optimized(
+            request_id=request_id,
+            session_id=session_id,
+            dataset_snapshot_id=dataset_snapshot_id,
+            playlist_track_count=len(playlist),
+            playlist_total_seconds=playlist_total_seconds,
+            target_seconds=target_seconds,
+            window_min_seconds=window_min_seconds,
+            window_max_seconds=window_max_seconds,
+            in_target_window=window_min_seconds <= playlist_total_seconds <= window_max_seconds,
+            optimizer_latency_ms=playlist_latency_ms,
+        )
 
     if playlist.empty:
+        if should_emit_request_logs:
+            emit_error(
+                request_id=request_id,
+                session_id=session_id,
+                dataset_snapshot_id=dataset_snapshot_id,
+                error_type="NoPlaylistGenerated",
+                error_code="EMPTY_PLAYLIST",
+                error_message="No playlist could be generated for this duration target.",
+                stage="playlist_optimized",
+                latency_ms=int((time.perf_counter() - request_started_at) * 1000),
+            )
+            base_app.st.session_state["lighter_request_log_pending"] = False
         base_app.st.warning("No playlist could be generated for this duration target. Try different seed selections.")
         base_app.st.stop()
 
@@ -582,6 +719,15 @@ def main() -> None:
         axis=1,
     )
     queue_signature = _queue_signature(queue, mood, target_minutes)
+    if should_emit_request_logs:
+        emit_response_sent(
+            request_id=request_id,
+            session_id=session_id,
+            dataset_snapshot_id=dataset_snapshot_id,
+            playlist_track_count=len(queue),
+            latency_ms=int((time.perf_counter() - request_started_at) * 1000),
+        )
+        base_app.st.session_state["lighter_request_log_pending"] = False
     _render_player_section(queue)
     _render_temp_playlist_section(queue, queue_signature)
 
