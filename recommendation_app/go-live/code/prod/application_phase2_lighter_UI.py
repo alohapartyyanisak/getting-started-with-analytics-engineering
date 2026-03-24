@@ -252,6 +252,11 @@ def main() -> None:
             f"Playlist window: {lower_window} to {upper_window} mins "
             f"({base_app.format_hours_minutes(lower_window)} to {base_app.format_hours_minutes(upper_window)})"
         )
+        generate_requested = base_app.st.button(
+            "Generate Playlist",
+            use_container_width=True,
+            key="public_generate_playlist_sidebar",
+        )
 
     seed_weight_items = tuple(sorted((str(name), float(weight)) for name, weight in seed_weights.items()))
     preferred_artist_weight_items: tuple[tuple[str, float], ...] = ()
@@ -268,6 +273,10 @@ def main() -> None:
         preferred_artist_weight_items=preferred_artist_weight_items,
         include_seed_tracks=include_seed_tracks,
     )
+    if generate_requested:
+        _reset_public_cached_state()
+        base_app.st.session_state["public_ui_cache_version"] = PUBLIC_UI_CACHE_VERSION
+
     if base_app.st.session_state.get("public_logged_signature") != generation_signature:
         request_id = str(uuid.uuid4())
         base_app.st.session_state["public_logged_signature"] = generation_signature
