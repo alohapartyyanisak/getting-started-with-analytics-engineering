@@ -135,19 +135,25 @@ def _render_seed_choice_checkboxes(label: str, options: list[str], state_key: st
     selected_values = set(base_app.st.session_state.get(state_key, []))
     chip_count = max(5, min(len(options), 8))
     visible_options = options[:chip_count]
-    chosen: list[str] = []
+    widget_keys: list[tuple[str, str]] = []
 
     for row_start in range(0, len(visible_options), 3):
         row_labels = visible_options[row_start : row_start + 3]
         columns = base_app.st.columns(len(row_labels))
         for idx, option in enumerate(row_labels):
+            widget_key = f"lighter_form_{state_key}_{row_start + idx}"
             checked = columns[idx].checkbox(
                 option,
                 value=option in selected_values,
-                key=f"lighter_form_{state_key}_{row_start + idx}",
+                key=widget_key,
             )
-            if checked:
-                chosen.append(option)
+            widget_keys.append((option, widget_key))
+
+    chosen = [
+        option
+        for option, widget_key in widget_keys
+        if bool(base_app.st.session_state.get(widget_key, False))
+    ]
 
     return chosen[: base_app.MAX_SEED_SELECTIONS]
 
