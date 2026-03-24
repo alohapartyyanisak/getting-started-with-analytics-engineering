@@ -302,10 +302,13 @@ def main() -> None:
         target_minutes = base_app.st.slider("Total Playlist Minutes (±3 mins)", 30, 300, 120)
         lower_window = target_minutes - base_app.PLAYLIST_TOLERANCE_MINUTES
         upper_window = target_minutes + base_app.PLAYLIST_TOLERANCE_MINUTES
-        base_app.st.caption(
-            f"Playlist window: {lower_window} to {upper_window} mins "
-            f"({base_app.format_hours_minutes(lower_window)} to {base_app.format_hours_minutes(upper_window)})"
-        )
+
+    sidebar_playlist_caption = (
+        f"Playlist window: {lower_window} to {upper_window} mins "
+        f"({base_app.format_hours_minutes(lower_window)} to {base_app.format_hours_minutes(upper_window)})"
+    )
+    sidebar_temp_playlist_payload: dict[str, Any] | None = None
+    sidebar_temp_playlist_duplicate_collapsed = 0
 
     seed_weight_items = tuple(sorted((str(name), float(weight)) for name, weight in seed_weights.items()))
     preferred_artist_weight_items: tuple[tuple[str, float], ...] = ()
@@ -449,6 +452,12 @@ def main() -> None:
 
     temp_playlist_payload = _load_or_build_temp_playlist_payload(generation_signature, queue)
     yt_stats = temp_playlist_payload.get("yt_stats", {}) if isinstance(temp_playlist_payload.get("yt_stats"), dict) else {}
+    target_rows = int(yt_stats.get("target_rows", 0) or 0)
+    playable_rows = int(yt_stats.get("playable_count", 0) or 0)
+    linked_rows = int(yt_stats.get("playable_linked_rows", playable_rows) or playable_rows)
+    duplicate_collapsed = max(0, linked_rows - playable_rows)
+    sidebar_temp_playlist_payload = temp_playlist_payload
+    sidebar_temp_playlist_duplicate_collapsed = duplicate_collapsed
 
     base_app.st.subheader("Playable Playlist")
 
@@ -499,29 +508,6 @@ def main() -> None:
         elif selected_spotify_track_id:
             _render_spotify_embed(selected_spotify_track_id)
 
-    playlist_url = str(temp_playlist_payload.get("playlist_url", "") or "").strip()
-    if playlist_url:
-        base_app.render_platform_link("Open Temporary YouTube Playlist", playlist_url)
-    else:
-        base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
-
-    target_rows = int(yt_stats.get("target_rows", 0) or 0)
-    playable_rows = int(yt_stats.get("playable_count", 0) or 0)
-    linked_rows = int(yt_stats.get("playable_linked_rows", playable_rows) or playable_rows)
-    if target_rows > 0:
-        coverage_pct = (linked_rows / target_rows) * 100.0
-        duplicate_collapsed = max(0, linked_rows - playable_rows)
-        base_app.st.caption(
-            "Temporary playlist coverage: "
-            f"{linked_rows}/{target_rows} rows linked ({coverage_pct:.0f}%). "
-            f"Unique YouTube IDs: {playable_rows}. "
-            f"Direct: {int(yt_stats.get('included_direct', 0) or 0)} · "
-            f"Resolved: {int(yt_stats.get('included_resolved', 0) or 0)} · "
-            f"Resolver attempts: {int(yt_stats.get('resolver_attempted', 0) or 0)}."
-        )
-        if duplicate_collapsed > 0:
-            base_app.st.caption(f"Duplicate IDs collapsed: {duplicate_collapsed}")
-
     if should_emit_request_logs:
         emit_response_sent(
             request_id=request_id,
@@ -531,6 +517,38 @@ def main() -> None:
             latency_ms=int((time.perf_counter() - request_started_at) * 1000),
         )
         base_app.st.session_state["public_request_log_pending"] = False
+
+    with base_app.st.sidebar:
+        base_app.st.caption(sidebar_playlist_caption)
+        if sidebar_temp_playlist_payload is not None:
+            playlist_url = str(sidebar_temp_playlist_payload.get("playlist_url", "") or "").strip()
+            sidebar_yt_stats = (
+                sidebar_temp_playlist_payload.get("yt_stats", {})
+                if isinstance(sidebar_temp_playlist_payload.get("yt_stats"), dict)
+                else {}
+            )
+            if playlist_url:
+                base_app.render_platform_link("Open Temporary YouTube Playlist", playlist_url)
+            else:
+                base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
+
+            sidebar_target_rows = int(sidebar_yt_stats.get("target_rows", 0) or 0)
+            sidebar_playable_rows = int(sidebar_yt_stats.get("playable_count", 0) or 0)
+            sidebar_linked_rows = int(
+                sidebar_yt_stats.get("playable_linked_rows", sidebar_playable_rows) or sidebar_playable_rows
+            )
+            if sidebar_target_rows > 0:
+                coverage_pct = (sidebar_linked_rows / sidebar_target_rows) * 100.0
+                base_app.st.caption(
+                    "Temporary playlist coverage: "
+                    f"{sidebar_linked_rows}/{sidebar_target_rows} rows linked ({coverage_pct:.0f}%). "
+                    f"Unique YouTube IDs: {sidebar_playable_rows}. "
+                    f"Direct: {int(sidebar_yt_stats.get('included_direct', 0) or 0)} · "
+                    f"Resolved: {int(sidebar_yt_stats.get('included_resolved', 0) or 0)} · "
+                    f"Resolver attempts: {int(sidebar_yt_stats.get('resolver_attempted', 0) or 0)}."
+                )
+                if sidebar_temp_playlist_duplicate_collapsed > 0:
+                    base_app.st.caption(f"Duplicate IDs collapsed: {sidebar_temp_playlist_duplicate_collapsed}")
 
 
 if __name__ == "__main__":
