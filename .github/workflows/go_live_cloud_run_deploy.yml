@@ -143,15 +143,18 @@ jobs:
         run: |
           set -euo pipefail
           ENV_FILE="$(mktemp)"
+          SERVICE_NAME="${{ steps.service_meta.outputs.service_name }}"
           APP_ENTRYPOINT="recommendation_app/go-live/code/application_phase2.py"
           DEPLOY_MEMORY="${CLOUD_RUN_MEMORY:-2Gi}"
           DEPLOY_CONCURRENCY="${CLOUD_RUN_CONCURRENCY:-1}"
           DEPLOY_MIN_INSTANCES="3"
           DEPLOY_MAX_INSTANCES="3"
-          if [ "${APP_VARIANT}" = "lighter" ]; then
-            APP_ENTRYPOINT="recommendation_app/go-live/code/prod/application_phase2_lighter_UI.py"
+          if [ "${SERVICE_NAME}" = "dj-mixing-station-go-live-lighter" ]; then
             DEPLOY_CONCURRENCY="20"
             DEPLOY_MAX_INSTANCES="10"
+          fi
+          if [ "${APP_VARIANT}" = "lighter" ]; then
+            APP_ENTRYPOINT="recommendation_app/go-live/code/prod/application_phase2_lighter_UI.py"
           fi
           {
             echo "GCS_DATASET_URI: \"${GCS_DATASET_URI}\""
