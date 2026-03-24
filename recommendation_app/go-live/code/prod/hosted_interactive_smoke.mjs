@@ -122,7 +122,14 @@ async function waitForBasePage(page) {
     ];
     if (SMOKE_PROFILE === 'lighter') {
       readyChecks.push(
-        page.getByRole('button', { name: 'Generate Playlist' }).first().waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
+        page.waitForFunction(
+          () => {
+            const bodyText = document.body?.innerText || '';
+            return bodyText.includes('Generate Playlist') || bodyText.includes('Playable Playlist');
+          },
+          null,
+          { timeout: 35000 },
+        ).then(() => true).catch(() => false),
       );
     } else {
       readyChecks.push(
@@ -142,7 +149,14 @@ async function waitForBasePage(page) {
   await waitForStartupHealthReady(page, 60000);
   await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
   if (SMOKE_PROFILE === 'lighter') {
-    await page.getByRole('button', { name: 'Generate Playlist' }).first().waitFor({ state: 'visible', timeout: 60000 });
+    await page.waitForFunction(
+      () => {
+        const bodyText = document.body?.innerText || '';
+        return bodyText.includes('Generate Playlist') || bodyText.includes('Playable Playlist');
+      },
+      null,
+      { timeout: 60000 },
+    );
   } else {
     await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
   }
@@ -351,7 +365,7 @@ async function waitForLighterReady(page) {
       return (
         bodyText.includes('DJ Mixing Station Studio') &&
         bodyText.includes('Choose your move') &&
-        bodyText.includes('Generate Playlist')
+        (bodyText.includes('Generate Playlist') || bodyText.includes('Playable Playlist'))
       );
     },
     null,
@@ -413,9 +427,13 @@ async function runLighterFlow(page, attempt) {
   attempt.checks.lighter_ready = true;
 
   const generateButton = page.getByRole('button', { name: 'Generate Playlist' }).first();
-  await generateButton.waitFor({ state: 'visible', timeout: 30000 });
-  await generateButton.click({ force: true });
-  attempt.checks.generate_clicked = true;
+  const hasGenerateButton = await generateButton.waitFor({ state: 'visible', timeout: 2000 }).then(() => true).catch(() => false);
+  if (hasGenerateButton) {
+    await generateButton.click({ force: true });
+    attempt.checks.generate_clicked = true;
+  } else {
+    attempt.checks.generate_clicked = false;
+  }
 
   await page.waitForFunction(
     () => {

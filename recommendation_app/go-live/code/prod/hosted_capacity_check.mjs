@@ -86,6 +86,23 @@ async function waitForCapacityBasePage(page) {
     return { app_kind: 'lighter', generated: true };
   }
 
+  const lighterAuto = await page.waitForFunction(
+    () => {
+      const bodyText = document.body?.innerText || '';
+      return (
+        bodyText.includes('Playable Playlist') &&
+        bodyText.includes('Now Playing') &&
+        bodyText.includes('Build Temporary YouTube Playlist')
+      );
+    },
+    null,
+    { timeout: 3000 },
+  ).then(() => true).catch(() => false);
+
+  if (lighterAuto) {
+    return { app_kind: 'lighter', generated: true };
+  }
+
   await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
   return { app_kind: 'developer', generated: false };
 }
