@@ -440,7 +440,7 @@ async function runLighterFlow(page, attempt) {
       const bodyText = document.body?.innerText || '';
       return (
         bodyText.includes('Playable Playlist') &&
-        bodyText.includes('Now Playing')
+        bodyText.includes('Play')
       );
     },
     null,
@@ -456,7 +456,7 @@ async function runLighterFlow(page, attempt) {
       bodyHasHero: bodyText.includes('DJ Mixing Station Studio'),
       bodyHasChooseMove: bodyText.includes('Choose your move'),
       bodyHasPlayablePlaylist: bodyText.includes('Playable Playlist'),
-      bodyHasNowPlaying: bodyText.includes('Now Playing'),
+      bodyHasPlayButtons: bodyText.includes('Play'),
       hiddenStartupHealth: (document.querySelector('[data-testid="startup-health-status"]')?.textContent || '').trim(),
       selectLabels: selectLabels.slice(0, 12),
       buttonTexts: buttonTexts.slice(0, 20),
@@ -464,7 +464,7 @@ async function runLighterFlow(page, attempt) {
   });
   attempt.dom_debug = lighterDebug;
   attempt.checks.playable_playlist_visible = Boolean(lighterDebug.bodyHasPlayablePlaylist);
-  attempt.checks.now_playing_visible = Boolean(lighterDebug.bodyHasNowPlaying);
+  attempt.checks.play_buttons_visible = Boolean(lighterDebug.bodyHasPlayButtons);
 }
 
 async function chooseArtist(page, artistName, expectedCount) {
