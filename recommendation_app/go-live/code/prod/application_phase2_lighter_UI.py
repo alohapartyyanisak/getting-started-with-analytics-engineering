@@ -152,6 +152,60 @@ def _store_cached_queue(signature: str, queue: pd.DataFrame) -> None:
     base_app.st.session_state["public_result_queue_records"] = queue.to_dict("records")
 
 
+def _build_temp_playlist_payload(queue: pd.DataFrame) -> dict[str, Any]:
+    youtube_ids_result = phase2_app._ORIGINAL_BUILD_PLAYABLE_YOUTUBE_IDS(
+        queue,
+        max_ids=50,
+        max_live_resolves=16,
+        live_timeout=3,
+        min_ids_required=2,
+        fill_to_max=False,
+        max_total_seconds=10.0,
+        return_stats=True,
+    )
+    if isinstance(youtube_ids_result, tuple):
+        youtube_ids, yt_stats = youtube_ids_result
+    else:
+        youtube_ids = youtube_ids_result
+        yt_stats = {
+            "playable_count": len(youtube_ids),
+            "playable_linked_rows": len(youtube_ids),
+            "target_rows": min(len(queue), 50),
+            "included_direct": 0,
+            "included_resolved": 0,
+            "resolver_attempted": 0,
+            "resolver_resolved": 0,
+            "duplicate_rows": 0,
+            "unresolved_rows": 0,
+            "budget_blocked_rows": 0,
+            "resolve_budget": 0,
+            "row_diagnostics": [],
+        }
+    playlist_url = ""
+    if len(youtube_ids) >= 2:
+        playlist_url = "https://www.youtube.com/watch_videos?video_ids=" + ",".join(youtube_ids[:50])
+    return {
+        "playlist_url": playlist_url,
+        "yt_stats": yt_stats,
+    }
+
+
+def _load_or_build_temp_playlist_payload(signature: str, queue: pd.DataFrame) -> dict[str, Any]:
+    cached_signature = str(base_app.st.session_state.get("public_temp_playlist_signature", "") or "").strip()
+    cached_payload = base_app.st.session_state.get("public_temp_playlist_payload")
+    if cached_signature == signature and isinstance(cached_payload, dict):
+        return cached_payload
+
+    payload = _build_temp_playlist_payload(queue)
+    base_app.st.session_state["public_temp_playlist_signature"] = signature
+    base_app.st.session_state["public_temp_playlist_payload"] = payload
+    yt_stats = payload.get("yt_stats", {}) if isinstance(payload.get("yt_stats"), dict) else {}
+    base_app.st.session_state["_yt_playlist_row_diagnostics"] = (
+        yt_stats.get("row_diagnostics", []) if isinstance(yt_stats.get("row_diagnostics", []), list) else []
+    )
+    return payload
+
+
 def _reset_public_cached_state() -> None:
     for key in [
         "public_result_signature",
@@ -393,6 +447,9 @@ def main() -> None:
         base_app.st.session_state.pop("public_temp_playlist_signature", None)
         base_app.st.session_state.pop("public_temp_playlist_payload", None)
 
+    temp_playlist_payload = _load_or_build_temp_playlist_payload(generation_signature, queue)
+    yt_stats = temp_playlist_payload.get("yt_stats", {}) if isinstance(temp_playlist_payload.get("yt_stats"), dict) else {}
+
     base_app.st.subheader("Playable Playlist")
 
     player_col, mode_col = base_app.st.columns([3, 2])
@@ -441,6 +498,29 @@ def main() -> None:
             phase2_app._ORIGINAL_ST_VIDEO(selected_youtube_watch)
         elif selected_spotify_track_id:
             _render_spotify_embed(selected_spotify_track_id)
+
+    playlist_url = str(temp_playlist_payload.get("playlist_url", "") or "").strip()
+    if playlist_url:
+        base_app.render_platform_link("Open Temporary YouTube Playlist", playlist_url)
+    else:
+        base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
+
+    target_rows = int(yt_stats.get("target_rows", 0) or 0)
+    playable_rows = int(yt_stats.get("playable_count", 0) or 0)
+    linked_rows = int(yt_stats.get("playable_linked_rows", playable_rows) or playable_rows)
+    if target_rows > 0:
+        coverage_pct = (linked_rows / target_rows) * 100.0
+        duplicate_collapsed = max(0, linked_rows - playable_rows)
+        base_app.st.caption(
+            "Temporary playlist coverage: "
+            f"{linked_rows}/{target_rows} rows linked ({coverage_pct:.0f}%). "
+            f"Unique YouTube IDs: {playable_rows}. "
+            f"Direct: {int(yt_stats.get('included_direct', 0) or 0)} · "
+            f"Resolved: {int(yt_stats.get('included_resolved', 0) or 0)} · "
+            f"Resolver attempts: {int(yt_stats.get('resolver_attempted', 0) or 0)}."
+        )
+        if duplicate_collapsed > 0:
+            base_app.st.caption(f"Duplicate IDs collapsed: {duplicate_collapsed}")
 
     if should_emit_request_logs:
         emit_response_sent(
