@@ -282,7 +282,6 @@ def main() -> None:
         raise
 
     playlist["mood_tag"] = mood
-    total_playlist_minutes = pd.to_numeric(playlist.get("duration_ms"), errors="coerce").fillna(0).sum() / 60_000
     if should_emit_request_logs:
         playlist_total_seconds = int((playlist.get("duration_ms", pd.Series(dtype=int)).fillna(0).sum()) / 1000)
         target_seconds = int(target_minutes * 60)
@@ -301,14 +300,6 @@ def main() -> None:
             optimizer_latency_ms=playlist_latency_ms,
         )
 
-    left, mid, right = base_app.st.columns(3)
-    with left:
-        base_app.render_metric_card("Tracks Available", f"{len(data):,}")
-    with mid:
-        base_app.render_metric_card("Artists Available", f"{data['artist'].nunique():,}")
-    with right:
-        base_app.render_metric_card("Playlist Duration", base_app.format_total_duration(total_playlist_minutes))
-
     if playlist.empty:
         if should_emit_request_logs:
             emit_error(
@@ -324,11 +315,6 @@ def main() -> None:
             base_app.st.session_state["public_request_log_pending"] = False
         base_app.st.warning("No playlist could be generated for this duration target. Try different seed selections.")
         base_app.st.stop()
-    if not (lower_window <= total_playlist_minutes <= upper_window):
-        base_app.st.warning(
-            f"No exact playlist found in {lower_window}-{upper_window} mins. "
-            f"Showing closest match: {base_app.format_total_duration(total_playlist_minutes)}."
-        )
 
     base_app.st.subheader("Playable Playlist")
     queue = playlist.copy().reset_index(drop=True)
