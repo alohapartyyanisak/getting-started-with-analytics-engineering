@@ -14,7 +14,7 @@ if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
 import phase2_runtime_config as cfg
-from phase2_managed_loader import load_prepared_dataset, validate_prepared_dataset
+from prod.application_phase2 import patch_base_app_for_phase2, base_app, read_source_phase2
 from prod.go_live_structured_logging import (
     emit_error,
     emit_playlist_optimized,
@@ -24,152 +24,51 @@ from prod.go_live_structured_logging import (
     emit_seed_resolution_completed,
 )
 
-if str(cfg.OFFLINE_V2_CODE_DIR) not in sys.path:
-    sys.path.insert(0, str(cfg.OFFLINE_V2_CODE_DIR))
-OFFLINE_V2_MODE_DIR = cfg.OFFLINE_V2_CODE_DIR / "prod"
-if str(OFFLINE_V2_MODE_DIR) not in sys.path:
-    sys.path.insert(0, str(OFFLINE_V2_MODE_DIR))
 
-import application_v2 as app_v2  # type: ignore  # noqa: E402
-
-
-base_app = app_v2.base_app
-
-
-@base_app.st.cache_data(show_spinner=False)
-def load_phase2_dataset_cached(version: str, dataset_root: str) -> tuple[pd.DataFrame, str]:
-    frame, release = load_prepared_dataset(version=version or None, dataset_root=Path(dataset_root))
-    return frame, release.version
-
-
-def read_source_phase2(_uploaded_file: Any, _dataset_id: str) -> tuple[pd.DataFrame, str, str]:
-    dataset_root = cfg.dataset_root()
-    prepared_df, release_version = load_phase2_dataset_cached(
-        version=cfg.DATASET_VERSION or "",
-        dataset_root=str(dataset_root),
-    )
-    source_path = f"managed_snapshot::{release_version}"
-    dataset_path = str((dataset_root / "snapshots" / release_version).resolve())
-    return prepared_df, source_path, dataset_path
-
-
-def prepare_music_data_cached_phase2(raw_df: pd.DataFrame) -> pd.DataFrame:
-    try:
-        return validate_prepared_dataset(raw_df.copy())
-    except Exception:
-        return app_v2.prepare_music_data_cached_v2(raw_df)
-
-
-def recommend_tracks_phase2(
-    data: pd.DataFrame,
-    seed_weight_items: tuple[tuple[str, float], ...],
-    mood: str,
-    spotify_weight: float,
-    discovery_mode: float,
-    top_k: int,
-    exclude_seed_tracks: bool,
-    preferred_artist_weight_items: tuple[tuple[str, float], ...],
-) -> pd.DataFrame:
-    seed_weights = {str(name): float(weight) for name, weight in seed_weight_items}
-    preferred_artist_weights = {str(name): float(weight) for name, weight in preferred_artist_weight_items}
-    return app_v2.recommend_tracks(
-        data=data,
-        seed_display_name=seed_weights,
-        mood=mood,
-        spotify_weight=spotify_weight,
-        discovery_mode=discovery_mode,
-        top_k=top_k,
-        exclude_seed_tracks=exclude_seed_tracks,
-        preferred_artist_weights=preferred_artist_weights,
+def _render_hidden_startup_health(status: str) -> None:
+    base_app.st.markdown(
+        (
+            '<div data-testid="startup-health-status" '
+            'style="display:none;visibility:hidden;height:0;overflow:hidden;">'
+            f"{status}"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
     )
 
 
-def build_duration_playlist_phase2(
-    recommendations: pd.DataFrame,
-    target_minutes: int,
-    tolerance_minutes: int,
-    candidate_limit: int,
-    max_tracks: int,
-) -> pd.DataFrame:
-    return app_v2.build_duration_playlist(
-        recommendations=recommendations,
-        target_minutes=target_minutes,
-        tolerance_minutes=tolerance_minutes,
-        candidate_limit=candidate_limit,
-        max_tracks=max_tracks,
-    )
+
+def _dataset_snapshot_id(source_path: str) -> str:
+    prefix = "managed_snapshot::"
+    text = str(source_path or "").strip()
+    if text.startswith(prefix):
+        version = text[len(prefix) :].strip()
+        if version:
+            return version
+    return str(cfg.DATASET_VERSION or "").strip() or "unknown_dataset"
 
 
-def get_seed_ui_options_phase2(data: pd.DataFrame) -> tuple[list[str], list[str], list[str], list[str]]:
-    song_options = sorted(data["display_name"].astype(str).unique().tolist())
-    artist_options = app_v2._artist_options_with_credits(data)
-    quick_top_songs = base_app.top_song_seed_options(data, top_n=8)
-    quick_top_artists = base_app.top_artist_seed_options(data, top_n=8)["artist"].astype(str).tolist()
-    return song_options, artist_options, quick_top_songs, quick_top_artists
+
+def _session_id() -> str:
+    session_id = str(base_app.st.session_state.get("public_session_id", "") or "").strip()
+    if not session_id:
+        session_id = str(uuid.uuid4())
+        base_app.st.session_state["public_session_id"] = session_id
+    return session_id
 
 
-def patch_base_app_for_phase2_lighter() -> None:
-    app_v2.patch_base_app_for_v2()
-    base_app.DEFAULT_DATASET_ID = "managed://latest"
-    base_app.read_source = read_source_phase2
-    base_app.prepare_music_data_cached = prepare_music_data_cached_phase2
-    base_app.recommend_tracks_cached = recommend_tracks_phase2
-    base_app.build_duration_playlist_cached = build_duration_playlist_phase2
-    base_app.get_seed_ui_options = get_seed_ui_options_phase2
+
+def _normalize_mode(experience_mode: str) -> str:
+    return "quick" if experience_mode == "Quick Mode" else "self_mix"
 
 
-def _render_seed_choice_chips(label: str, options: list[str], state_key: str) -> None:
-    base_app.st.caption(label)
-    clicked = base_app.render_toggle_chips(
-        options,
-        selected_values=list(base_app.st.session_state[state_key]),
-        key_prefix=f"lighter_{state_key}",
-        min_chips=5,
-    )
-    if clicked:
-        base_app._toggle_seed_selection(state_key, clicked, base_app.MAX_SEED_SELECTIONS)
 
+def _normalize_start_mode(experience_state: dict[str, Any]) -> str | None:
+    if experience_state.get("experience_mode") == "Quick Mode":
+        return "quick_mode"
+    text = str(base_app.st.session_state.get("start_mode", "") or "").strip().lower()
+    return text.replace(" ", "_") if text else None
 
-def _render_seed_choice_checkboxes(label: str, options: list[str], state_key: str) -> list[str]:
-    base_app.st.caption(label)
-    selected_values = set(base_app.st.session_state.get(state_key, []))
-    chip_count = max(5, min(len(options), 8))
-    visible_options = options[:chip_count]
-    widget_keys: list[tuple[str, str]] = []
-
-    for row_start in range(0, len(visible_options), 3):
-        row_labels = visible_options[row_start : row_start + 3]
-        columns = base_app.st.columns(len(row_labels))
-        for idx, option in enumerate(row_labels):
-            widget_key = f"lighter_form_{state_key}_{row_start + idx}"
-            checked = columns[idx].checkbox(
-                option,
-                value=option in selected_values,
-                key=widget_key,
-            )
-            widget_keys.append((option, widget_key))
-
-    chosen = [
-        option
-        for option, widget_key in widget_keys
-        if bool(base_app.st.session_state.get(widget_key, False))
-    ]
-
-    return chosen[: base_app.MAX_SEED_SELECTIONS]
-
-
-def _queue_signature(queue: pd.DataFrame, mood: str, target_minutes: int) -> str:
-    payload = "|".join(
-        queue.get("queue_label", pd.Series(dtype=str)).astype(str).tolist()
-        + [str(mood), str(target_minutes)]
-    )
-    return hashlib.sha1(payload.encode("utf-8")).hexdigest()
-
-
-def _pick_surprise_seed(data: pd.DataFrame, counter: int) -> str:
-    candidates = data.sort_values(["momentum_score", "views", "stream"], ascending=False).head(250)
-    picked_seed = candidates.sample(1, random_state=9000 + counter).iloc[0]["display_name"]
-    return str(picked_seed)
 
 
 def _generation_signature(
@@ -195,34 +94,6 @@ def _generation_signature(
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
-def _dataset_snapshot_id(source_path: str) -> str:
-    prefix = "managed_snapshot::"
-    text = str(source_path or "").strip()
-    if text.startswith(prefix):
-        version = text[len(prefix) :].strip()
-        if version:
-            return version
-    return str(cfg.DATASET_VERSION or "").strip() or "unknown_dataset"
-
-
-def _normalize_mode(experience_mode: str) -> str:
-    return "quick" if experience_mode == "Quick Mode" else "self_mix"
-
-
-def _normalize_start_mode(experience_state: dict[str, Any]) -> str | None:
-    if experience_state.get("experience_mode") == "Quick Mode":
-        return "quick_mode"
-    text = str(experience_state.get("start_mode", "") or "").strip().lower()
-    return text.replace(" ", "_") if text else None
-
-
-def _session_id() -> str:
-    session_id = str(base_app.st.session_state.get("lighter_session_id", "") or "").strip()
-    if not session_id:
-        session_id = str(uuid.uuid4())
-        base_app.st.session_state["lighter_session_id"] = session_id
-    return session_id
-
 
 def _render_spotify_embed(track_id: str) -> None:
     embed_url = f"https://open.spotify.com/embed/track/{track_id}?utm_source=generator"
@@ -233,179 +104,9 @@ def _render_spotify_embed(track_id: str) -> None:
     )
 
 
-def _render_hidden_startup_health(status: str) -> None:
-    base_app.st.markdown(
-        (
-            '<div data-testid="startup-health-status" '
-            'style="display:none;visibility:hidden;height:0;overflow:hidden;">'
-            f"{status}"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
-
-
-def _render_queue_table(queue: pd.DataFrame) -> None:
-    lines: list[str] = []
-    for row in queue.itertuples(index=False):
-        spotify_url = str(getattr(row, "spotify_url", "") or "").strip()
-        youtube_url = str(getattr(row, "youtube_url", "") or "").strip()
-        parts = [
-            f"**{int(getattr(row, 'position')):02d}. {getattr(row, 'artist')} - {getattr(row, 'track')}**",
-            f"`{getattr(row, 'duration_text')}`",
-        ]
-        link_parts: list[str] = []
-        if spotify_url:
-            link_parts.append(f"[Spotify]({spotify_url})")
-        if youtube_url:
-            link_parts.append(f"[YouTube]({youtube_url})")
-        if link_parts:
-            parts.append(" · ".join(link_parts))
-        lines.append(" · ".join(parts))
-    base_app.st.markdown("\n\n".join(lines))
-
-
-def _render_player_section(queue: pd.DataFrame) -> None:
-    base_app.st.subheader("Playable Playlist")
-    _render_queue_table(queue)
-    selected_position = base_app.st.slider("Now Playing", 1, int(len(queue)), 1)
-    playback_platform = base_app.st.radio("Playback", options=["Auto", "Spotify", "YouTube"], horizontal=True)
-
-    current_signature = f"{selected_position}:{playback_platform}"
-    if base_app.st.session_state.get("lighter_player_signature") != current_signature:
-        base_app.st.session_state["lighter_player_signature"] = current_signature
-        if "lighter_player_open" not in base_app.st.session_state:
-            base_app.st.session_state["lighter_player_open"] = False
-
-    open_requested = base_app.st.button("Open Player", key="lighter_open_player_button")
-    if open_requested:
-        base_app.st.session_state["lighter_player_open"] = True
-
-    if not base_app.st.session_state.get("lighter_player_open", False):
-        base_app.st.caption("Player loads only when you open it.")
-        return
-
-    selected_row = queue.loc[queue["position"] == selected_position].iloc[0]
-    selected_spotify = str(selected_row["spotify_url"]).strip()
-    selected_youtube, selected_youtube_watch = base_app.resolve_playback_youtube_targets(selected_row)
-    selected_youtube = str(selected_youtube).strip()
-    selected_youtube_watch = str(selected_youtube_watch).strip()
-    selected_spotify_track_id = base_app.extract_spotify_track_id(selected_spotify)
-
-    if playback_platform == "YouTube" and not selected_youtube_watch:
-        forced_link, forced_embed = base_app.resolve_playback_youtube_targets(
-            selected_row,
-            force_live=True,
-            live_timeout=4,
-        )
-        selected_youtube = str(forced_link or selected_youtube).strip()
-        selected_youtube_watch = str(forced_embed or selected_youtube_watch).strip()
-
-    if playback_platform == "YouTube":
-        if selected_youtube_watch:
-            base_app.st.video(selected_youtube_watch)
-        elif selected_spotify_track_id:
-            base_app.st.info("YouTube embed unavailable for this track. Falling back to Spotify player.")
-            _render_spotify_embed(selected_spotify_track_id)
-        elif selected_youtube:
-            base_app.st.info("No direct YouTube video ID available for embed. Use the YouTube link in the playlist.")
-    elif playback_platform == "Spotify":
-        if selected_spotify_track_id:
-            _render_spotify_embed(selected_spotify_track_id)
-        elif selected_spotify:
-            base_app.st.info("No direct Spotify track ID available for embed. Use the Spotify link in the playlist.")
-    else:
-        if selected_youtube_watch:
-            base_app.st.video(selected_youtube_watch)
-        elif selected_spotify_track_id:
-            _render_spotify_embed(selected_spotify_track_id)
-        elif selected_youtube:
-            base_app.st.info("Use the YouTube link in the playlist for this track.")
-
-
-def _render_temp_playlist_section(queue: pd.DataFrame, queue_signature: str) -> None:
-    with base_app.st.sidebar:
-        base_app.st.markdown("---")
-        build_requested = base_app.st.button(
-            "Build Temporary YouTube Playlist",
-            use_container_width=True,
-            key="lighter_ui_build_temp_playlist",
-        )
-
-    if build_requested:
-        with base_app.st.spinner("Building temporary YouTube playlist from playable URLs..."):
-            youtube_ids_result = base_app.build_playable_youtube_ids(
-                queue,
-                max_ids=50,
-                max_live_resolves=16,
-                live_timeout=3,
-                min_ids_required=2,
-                fill_to_max=False,
-                max_total_seconds=10.0,
-                return_stats=True,
-            )
-        if isinstance(youtube_ids_result, tuple):
-            youtube_ids, yt_stats = youtube_ids_result
-        else:
-            youtube_ids = youtube_ids_result
-            yt_stats = {
-                "playable_count": len(youtube_ids),
-                "playable_linked_rows": len(youtube_ids),
-                "target_rows": min(len(queue), 50),
-                "included_direct": 0,
-                "included_resolved": 0,
-                "resolver_attempted": 0,
-                "resolver_resolved": 0,
-                "duplicate_rows": 0,
-                "unresolved_rows": 0,
-                "budget_blocked_rows": 0,
-                "resolve_budget": 0,
-                "row_diagnostics": [],
-            }
-        base_app.st.session_state["lighter_ui_temp_playlist"] = {
-            "signature": queue_signature,
-            "youtube_ids": youtube_ids,
-            "yt_stats": yt_stats,
-        }
-
-    stored = base_app.st.session_state.get("lighter_ui_temp_playlist")
-    if not stored or stored.get("signature") != queue_signature:
-        with base_app.st.sidebar:
-            base_app.st.caption("Playlist link is generated only when you click the button.")
-        return
-
-    youtube_ids = stored.get("youtube_ids", [])
-    yt_stats = stored.get("yt_stats", {})
-
-    if len(youtube_ids) >= 2:
-        temp_youtube_playlist = "https://www.youtube.com/watch_videos?video_ids=" + ",".join(youtube_ids[:50])
-        with base_app.st.sidebar:
-            base_app.render_platform_link("Open Temporary YouTube Playlist", temp_youtube_playlist)
-    else:
-        with base_app.st.sidebar:
-            base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
-
-    target_rows = int(yt_stats.get("target_rows", 0) or 0)
-    playable_rows = int(yt_stats.get("playable_count", 0) or 0)
-    linked_rows = int(yt_stats.get("playable_linked_rows", playable_rows) or playable_rows)
-    if target_rows > 0:
-        coverage_pct = (linked_rows / target_rows) * 100.0
-        duplicate_collapsed = max(0, linked_rows - playable_rows)
-        with base_app.st.sidebar:
-            base_app.st.caption(
-                "Temporary playlist coverage: "
-                f"{linked_rows}/{target_rows} rows linked ({coverage_pct:.0f}%). "
-                f"Unique YouTube IDs: {playable_rows}. "
-                f"Direct: {int(yt_stats.get('included_direct', 0) or 0)} · "
-                f"Resolved: {int(yt_stats.get('included_resolved', 0) or 0)} · "
-                f"Resolver attempts: {int(yt_stats.get('resolver_attempted', 0) or 0)}."
-            )
-            if duplicate_collapsed > 0:
-                base_app.st.caption(f"Duplicate IDs collapsed: {duplicate_collapsed}")
-
 
 def main() -> None:
-    patch_base_app_for_phase2_lighter()
+    patch_base_app_for_phase2()
 
     base_app.st.set_page_config(page_title="DJ Mixing Station Studio", page_icon="🎵", layout="wide")
     base_app.apply_theme()
@@ -422,7 +123,8 @@ def main() -> None:
 
     try:
         raw_df, source_path, dataset_path = read_source_phase2(None, base_app.DEFAULT_DATASET_ID)
-        data = prepare_music_data_cached_phase2(raw_df)
+        data = base_app.prepare_music_data_cached(raw_df)
+        _render_hidden_startup_health("Healthy")
     except Exception as exc:
         _render_hidden_startup_health("Unhealthy")
         base_app.st.error(str(exc))
@@ -433,129 +135,53 @@ def main() -> None:
         base_app.st.error("No usable rows found after cleaning the dataset.")
         base_app.st.stop()
 
-    _render_hidden_startup_health("Healthy")
     dataset_snapshot_id = _dataset_snapshot_id(source_path)
     session_id = _session_id()
 
-    base_app._init_seed_selection_state(data)
-    song_options, artist_options, quick_top_songs, quick_top_artists = get_seed_ui_options_phase2(data)
+    seed_weights, experience_state = base_app.render_seed_experience(data)
 
-    base_app.st.markdown('<div class="action-title">Choose your move</div>', unsafe_allow_html=True)
-    if "lighter_surprise_counter" not in base_app.st.session_state:
-        base_app.st.session_state["lighter_surprise_counter"] = 0
-    if "lighter_surprise_seed_track" not in base_app.st.session_state:
-        base_app.st.session_state["lighter_surprise_seed_track"] = ""
+    with base_app.st.sidebar:
+        base_app.st.header("Recommendation Controls")
+        if experience_state.get("experience_mode") == "Quick Mode":
+            selected_quick_vibe = str(experience_state.get("quick_vibe", "Focus Flow"))
+            quick_defaults = base_app.QUICK_VIBE_DEFAULTS.get(selected_quick_vibe, base_app.QUICK_VIBE_DEFAULTS["Focus Flow"])
+            if base_app.st.session_state.get("quick_vibe_applied") != selected_quick_vibe:
+                base_app.st.session_state["quick_spotify_weight_pct"] = int(quick_defaults["spotify_weight_pct"])
+                base_app.st.session_state["quick_discovery_hits_pct"] = int(quick_defaults["discovery_hits_pct"])
+                base_app.st.session_state["quick_vibe_applied"] = selected_quick_vibe
 
-    with base_app.st.form("lighter_generate_form"):
-        experience_mode = base_app.st.radio(
-            "Mix Mode",
-            options=["Quick Mode", "Self Mix"],
-            key="lighter_experience_mode",
-            horizontal=True,
-            label_visibility="collapsed",
-        )
-
-        controls_col, mood_col = base_app.st.columns([1.3, 1.0], gap="large")
-
-        with controls_col:
-            if experience_mode == "Quick Mode":
-                selected_quick_vibe = base_app.st.radio(
-                    "Vibe Options",
-                    options=list(base_app.PERSONALITY_PROFILES.keys()),
-                    key="lighter_quick_vibe_option",
-                    horizontal=True,
-                )
-                vibe_seed, vibe_description = base_app.personality_seed_option(data, selected_quick_vibe)
-                base_app.st.caption(vibe_description)
-                seed_weights = {str(vibe_seed): 1.0}
-                experience_state = {"experience_mode": "Quick Mode", "quick_vibe": selected_quick_vibe}
-            else:
-                start_mode = base_app.st.radio(
-                    "How to Start",
-                    options=["Pick Songs", "Pick Artists", "Surprise Me"],
-                    key="lighter_start_mode",
-                    horizontal=True,
-                    label_visibility="collapsed",
-                )
-                if start_mode == "Pick Songs":
-                    base_app.st.session_state["selected_seed_songs"] = _render_seed_choice_checkboxes(
-                        "Quick top songs",
-                        quick_top_songs,
-                        "selected_seed_songs",
-                    )
-                    base_app.st.session_state["selected_seed_artists"] = []
-                elif start_mode == "Pick Artists":
-                    base_app.st.session_state["selected_seed_artists"] = _render_seed_choice_checkboxes(
-                        "Quick top artists",
-                        quick_top_artists,
-                        "selected_seed_artists",
-                    )
-                    base_app.st.session_state["selected_seed_songs"] = []
-                else:
-                    base_app.st.session_state["selected_seed_songs"] = []
-                    base_app.st.session_state["selected_seed_artists"] = []
-                    surprise_seed = base_app.st.session_state.get("lighter_surprise_seed_track") or base_app._default_seed_track(data)
-                    base_app.st.caption("A random starter is chosen when you generate the playlist.")
-                    base_app.st.success(f"Current random starter: {surprise_seed}")
-
-                seed_weights = base_app._build_seed_weights_from_state(data)
-                if start_mode == "Surprise Me":
-                    current_surprise = base_app.st.session_state.get("lighter_surprise_seed_track") or base_app._default_seed_track(data)
-                    seed_weights = {str(current_surprise): 1.0}
-                if not seed_weights:
-                    seed_weights = {base_app._default_seed_track(data): 1.0}
-                experience_state = {"experience_mode": "Self Mix", "start_mode": start_mode}
-
-        with mood_col:
-            base_app.st.markdown("#### Recommendation Controls")
-            if experience_state.get("experience_mode") == "Quick Mode":
-                quick_defaults = base_app.QUICK_VIBE_DEFAULTS.get(
-                    str(experience_state.get("quick_vibe", "Focus Flow")),
-                    base_app.QUICK_VIBE_DEFAULTS["Focus Flow"],
-                )
-                if base_app.st.session_state.get("quick_vibe_applied") != experience_state.get("quick_vibe"):
-                    base_app.st.session_state["quick_spotify_weight_pct"] = int(quick_defaults["spotify_weight_pct"])
-                    base_app.st.session_state["quick_discovery_hits_pct"] = int(quick_defaults["discovery_hits_pct"])
-                    base_app.st.session_state["quick_vibe_applied"] = experience_state.get("quick_vibe")
-
-                mood = str(quick_defaults["mood"])
-                spotify_weight_pct = base_app.st.slider("Platform Bias", 0, 100, key="quick_spotify_weight_pct")
-                youtube_weight_pct = 100 - spotify_weight_pct
-                base_app.st.caption(f"Spotify ({spotify_weight_pct}%) <- -> YouTube ({youtube_weight_pct}%)")
-                discovery_hits_pct = base_app.st.slider("Discovery Mode", 0, 100, key="quick_discovery_hits_pct")
-                hidden_gems_pct = 100 - discovery_hits_pct
-                base_app.st.caption(f"Hits ({discovery_hits_pct}%) <- -> Hidden Gems ({hidden_gems_pct}%)")
-            else:
-                self_mix_vibe = base_app.st.radio(
-                    "Vibe Options",
-                    options=list(base_app.PERSONALITY_PROFILES.keys()),
-                    index=0,
-                    key="lighter_self_mix_vibe_option",
-                    horizontal=True,
-                )
-                mood = str(base_app.QUICK_VIBE_DEFAULTS.get(self_mix_vibe, base_app.QUICK_VIBE_DEFAULTS["Focus Flow"])["mood"])
-                if "spotify_weight_pct" not in base_app.st.session_state:
-                    base_app.st.session_state["spotify_weight_pct"] = 65
-                spotify_weight_pct = base_app.st.slider("Platform Bias", 0, 100, key="spotify_weight_pct")
-                youtube_weight_pct = 100 - spotify_weight_pct
-                base_app.st.caption(f"Spotify ({spotify_weight_pct}%) <- -> YouTube ({youtube_weight_pct}%)")
-                if "discovery_hits_pct" not in base_app.st.session_state:
-                    base_app.st.session_state["discovery_hits_pct"] = 65
-                discovery_hits_pct = base_app.st.slider("Discovery Mode", 0, 100, key="discovery_hits_pct")
-                hidden_gems_pct = 100 - discovery_hits_pct
-                base_app.st.caption(f"Hits ({discovery_hits_pct}%) <- -> Hidden Gems ({hidden_gems_pct}%)")
-
-            target_minutes = base_app.st.slider("Total Playlist Minutes (±3 mins)", 30, 300, 120)
-            lower_window = target_minutes - base_app.PLAYLIST_TOLERANCE_MINUTES
-            upper_window = target_minutes + base_app.PLAYLIST_TOLERANCE_MINUTES
-            base_app.st.caption(
-                f"Playlist window: {lower_window} to {upper_window} mins "
-                f"({base_app.format_hours_minutes(lower_window)} to {base_app.format_hours_minutes(upper_window)})"
+            mood = str(quick_defaults["mood"])
+            spotify_weight_pct = base_app.st.slider("Platform Bias", 0, 100, key="quick_spotify_weight_pct")
+            youtube_weight_pct = 100 - spotify_weight_pct
+            base_app.st.caption(f"Spotify ({spotify_weight_pct}%) <- -> YouTube ({youtube_weight_pct}%)")
+            discovery_hits_pct = base_app.st.slider("Discovery Mode", 0, 100, key="quick_discovery_hits_pct")
+            hidden_gems_pct = 100 - discovery_hits_pct
+            base_app.st.caption(f"Hits ({discovery_hits_pct}%) <- -> Hidden Gems ({hidden_gems_pct}%)")
+        else:
+            self_mix_vibe = base_app.st.selectbox(
+                "Vibe Options",
+                options=list(base_app.PERSONALITY_PROFILES.keys()),
+                index=0,
+                key="self_mix_vibe_option",
             )
+            mood = str(base_app.QUICK_VIBE_DEFAULTS.get(self_mix_vibe, base_app.QUICK_VIBE_DEFAULTS["Focus Flow"])["mood"])
+            if "spotify_weight_pct" not in base_app.st.session_state:
+                base_app.st.session_state["spotify_weight_pct"] = 65
+            spotify_weight_pct = base_app.st.slider("Platform Bias", 0, 100, key="spotify_weight_pct")
+            youtube_weight_pct = 100 - spotify_weight_pct
+            base_app.st.caption(f"Spotify ({spotify_weight_pct}%) <- -> YouTube ({youtube_weight_pct}%)")
+            if "discovery_hits_pct" not in base_app.st.session_state:
+                base_app.st.session_state["discovery_hits_pct"] = 65
+            discovery_hits_pct = base_app.st.slider("Discovery Mode", 0, 100, key="discovery_hits_pct")
+            hidden_gems_pct = 100 - discovery_hits_pct
+            base_app.st.caption(f"Hits ({discovery_hits_pct}%) <- -> Hidden Gems ({hidden_gems_pct}%)")
 
-        generate_clicked = base_app.st.form_submit_button(
-            "Generate Playlist",
-            use_container_width=True,
+        target_minutes = base_app.st.slider("Total Playlist Minutes (±3 mins)", 30, 300, 120)
+        lower_window = target_minutes - base_app.PLAYLIST_TOLERANCE_MINUTES
+        upper_window = target_minutes + base_app.PLAYLIST_TOLERANCE_MINUTES
+        base_app.st.caption(
+            f"Playlist window: {lower_window} to {upper_window} mins "
+            f"({base_app.format_hours_minutes(lower_window)} to {base_app.format_hours_minutes(upper_window)})"
         )
 
     seed_weight_items = tuple(sorted((str(name), float(weight)) for name, weight in seed_weights.items()))
@@ -563,15 +189,6 @@ def main() -> None:
     if experience_state.get("experience_mode") == "Self Mix":
         preferred_artist_weight_items = tuple(sorted(base_app._build_preferred_artist_weights(data).items()))
     include_seed_tracks = discovery_hits_pct == 100
-
-    if generate_clicked and experience_state.get("experience_mode") == "Self Mix" and experience_state.get("start_mode") == "Surprise Me":
-        base_app.st.session_state["lighter_surprise_counter"] += 1
-        base_app.st.session_state["lighter_surprise_seed_track"] = _pick_surprise_seed(
-            data,
-            base_app.st.session_state["lighter_surprise_counter"],
-        )
-        seed_weights = {str(base_app.st.session_state["lighter_surprise_seed_track"]): 1.0}
-        seed_weight_items = tuple(sorted((str(name), float(weight)) for name, weight in seed_weights.items()))
 
     generation_signature = _generation_signature(
         seed_weight_items=seed_weight_items,
@@ -582,23 +199,13 @@ def main() -> None:
         preferred_artist_weight_items=preferred_artist_weight_items,
         include_seed_tracks=include_seed_tracks,
     )
-
-    if generate_clicked:
-        base_app.st.session_state["lighter_generated_signature"] = generation_signature
-        base_app.st.session_state["lighter_request_id"] = str(uuid.uuid4())
-        base_app.st.session_state["lighter_request_signature"] = generation_signature
-        base_app.st.session_state["lighter_request_log_pending"] = True
-
-    if base_app.st.session_state.get("lighter_generated_signature") != generation_signature:
-        base_app.st.caption("Choose your inputs, then generate the playlist.")
-        base_app.st.stop()
-
-    request_id = str(base_app.st.session_state.get("lighter_request_id", "") or "").strip()
-    should_emit_request_logs = (
-        bool(request_id)
-        and bool(base_app.st.session_state.get("lighter_request_log_pending", False))
-        and str(base_app.st.session_state.get("lighter_request_signature", "") or "") == generation_signature
-    )
+    if base_app.st.session_state.get("public_logged_signature") != generation_signature:
+        request_id = str(uuid.uuid4())
+        base_app.st.session_state["public_logged_signature"] = generation_signature
+        base_app.st.session_state["public_request_id"] = request_id
+        base_app.st.session_state["public_request_log_pending"] = True
+    request_id = str(base_app.st.session_state.get("public_request_id", "") or "").strip()
+    should_emit_request_logs = bool(request_id) and bool(base_app.st.session_state.get("public_request_log_pending", False))
     request_started_at = time.perf_counter()
 
     if should_emit_request_logs:
@@ -606,13 +213,13 @@ def main() -> None:
             request_id=request_id,
             session_id=session_id,
             dataset_snapshot_id=dataset_snapshot_id,
-            mode=_normalize_mode(experience_mode),
+            mode=_normalize_mode(str(experience_state.get("experience_mode", "Self Mix"))),
             start_mode=_normalize_start_mode(experience_state),
             target_minutes=target_minutes,
             tolerance_minutes=base_app.PLAYLIST_TOLERANCE_MINUTES,
             platform_bias_spotify_pct=spotify_weight_pct,
             discovery_hits_pct=discovery_hits_pct,
-            vibe_option=str(experience_state.get("quick_vibe") or base_app.st.session_state.get("lighter_self_mix_vibe_option") or ""),
+            vibe_option=str(experience_state.get("quick_vibe") or base_app.st.session_state.get("self_mix_vibe_option") or ""),
             final_pick_count=len(seed_weight_items),
         )
         emit_seed_resolution_completed(
@@ -627,7 +234,7 @@ def main() -> None:
 
     try:
         ranking_started_at = time.perf_counter()
-        recommendations = recommend_tracks_phase2(
+        recommendations = base_app.recommend_tracks_cached(
             data=data,
             seed_weight_items=seed_weight_items,
             mood=mood,
@@ -651,7 +258,7 @@ def main() -> None:
             )
 
         playlist_started_at = time.perf_counter()
-        playlist = build_duration_playlist_phase2(
+        playlist = base_app.build_duration_playlist_cached(
             recommendations=recommendations,
             target_minutes=target_minutes,
             tolerance_minutes=base_app.PLAYLIST_TOLERANCE_MINUTES,
@@ -671,10 +278,11 @@ def main() -> None:
                 stage="ranking_or_playlist",
                 latency_ms=int((time.perf_counter() - request_started_at) * 1000),
             )
-            base_app.st.session_state["lighter_request_log_pending"] = False
+            base_app.st.session_state["public_request_log_pending"] = False
         raise
 
     playlist["mood_tag"] = mood
+    total_playlist_minutes = pd.to_numeric(playlist.get("duration_ms"), errors="coerce").fillna(0).sum() / 60_000
     if should_emit_request_logs:
         playlist_total_seconds = int((playlist.get("duration_ms", pd.Series(dtype=int)).fillna(0).sum()) / 1000)
         target_seconds = int(target_minutes * 60)
@@ -693,6 +301,14 @@ def main() -> None:
             optimizer_latency_ms=playlist_latency_ms,
         )
 
+    left, mid, right = base_app.st.columns(3)
+    with left:
+        base_app.render_metric_card("Tracks Available", f"{len(data):,}")
+    with mid:
+        base_app.render_metric_card("Artists Available", f"{data['artist'].nunique():,}")
+    with right:
+        base_app.render_metric_card("Playlist Duration", base_app.format_total_duration(total_playlist_minutes))
+
     if playlist.empty:
         if should_emit_request_logs:
             emit_error(
@@ -705,17 +321,20 @@ def main() -> None:
                 stage="playlist_optimized",
                 latency_ms=int((time.perf_counter() - request_started_at) * 1000),
             )
-            base_app.st.session_state["lighter_request_log_pending"] = False
+            base_app.st.session_state["public_request_log_pending"] = False
         base_app.st.warning("No playlist could be generated for this duration target. Try different seed selections.")
         base_app.st.stop()
+    if not (lower_window <= total_playlist_minutes <= upper_window):
+        base_app.st.warning(
+            f"No exact playlist found in {lower_window}-{upper_window} mins. "
+            f"Showing closest match: {base_app.format_total_duration(total_playlist_minutes)}."
+        )
 
+    base_app.st.subheader("Playable Playlist")
     queue = playlist.copy().reset_index(drop=True)
     queue["position"] = queue.index + 1
     queue["duration_text"] = queue["duration_ms"].apply(base_app.format_track_duration)
-    queue["spotify_url"] = queue.apply(
-        lambda row: row.get("spotify_link") or row.get("url_spotify") or "",
-        axis=1,
-    )
+    queue["spotify_url"] = queue.apply(lambda row: row.get("spotify_link") or row.get("url_spotify") or "", axis=1)
     queue["youtube_url"] = queue.apply(
         lambda row: base_app.prefer_direct_youtube_url(row.get("youtube_link"), row.get("url_youtube")),
         axis=1,
@@ -724,7 +343,109 @@ def main() -> None:
         lambda row: f'{int(row["position"]):02d}. {row["artist"]} - {row["track"]} ({row["duration_text"]})',
         axis=1,
     )
-    queue_signature = _queue_signature(queue, mood, target_minutes)
+
+    player_col, mode_col = base_app.st.columns([3, 2])
+    with player_col:
+        selected_label = base_app.st.selectbox("Now Playing", options=queue["queue_label"].tolist())
+    with mode_col:
+        playback_platform = base_app.st.radio("Playback", options=["Auto", "Spotify", "YouTube"], horizontal=True)
+
+    selected_row = queue.loc[queue["queue_label"] == selected_label].iloc[0]
+    selected_spotify = str(selected_row["spotify_url"]).strip()
+    selected_youtube, selected_youtube_watch = base_app.resolve_playback_youtube_targets(selected_row)
+    selected_youtube = str(selected_youtube).strip()
+    selected_youtube_watch = str(selected_youtube_watch).strip()
+    selected_spotify_track_id = base_app.extract_spotify_track_id(selected_spotify)
+
+    if (playback_platform in {"YouTube", "Auto"}) and not selected_youtube_watch:
+        forced_link, forced_embed = base_app.resolve_playback_youtube_targets(selected_row, force_live=True, live_timeout=4)
+        forced_link = str(forced_link).strip()
+        forced_embed = str(forced_embed).strip()
+        if forced_link:
+            selected_youtube = forced_link
+        if forced_embed:
+            selected_youtube_watch = forced_embed
+
+    base_app.st.markdown(
+        f'**{selected_row["artist"]} - {selected_row["track"]}** · {selected_row["duration_text"]} '
+        f'· Momentum {selected_row["momentum_score"]:.3f}'
+    )
+    base_app.render_track_links(selected_spotify, selected_youtube)
+
+    if playback_platform == "YouTube":
+        if selected_youtube_watch:
+            base_app.st.video(selected_youtube_watch)
+        elif selected_spotify_track_id:
+            base_app.st.info("YouTube embed unavailable for this track. Falling back to Spotify player.")
+            _render_spotify_embed(selected_spotify_track_id)
+        elif selected_youtube:
+            base_app.st.info("No direct YouTube video ID available for embed. Use the YouTube button.")
+    elif playback_platform == "Spotify":
+        if selected_spotify_track_id:
+            _render_spotify_embed(selected_spotify_track_id)
+        elif selected_spotify:
+            base_app.st.info("No direct Spotify track ID available for embed. Use the Spotify button.")
+    else:
+        if selected_youtube_watch:
+            base_app.st.video(selected_youtube_watch)
+        elif selected_spotify_track_id:
+            _render_spotify_embed(selected_spotify_track_id)
+
+    with base_app.st.spinner("Building temporary YouTube playlist from playable URLs..."):
+        youtube_ids_result = base_app.build_playable_youtube_ids(
+            queue,
+            max_ids=50,
+            max_live_resolves=16,
+            live_timeout=3,
+            min_ids_required=2,
+            fill_to_max=False,
+            max_total_seconds=10.0,
+            return_stats=True,
+        )
+    if isinstance(youtube_ids_result, tuple):
+        youtube_ids, yt_stats = youtube_ids_result
+    else:
+        youtube_ids = youtube_ids_result
+        yt_stats = {
+            "playable_count": len(youtube_ids),
+            "playable_linked_rows": len(youtube_ids),
+            "target_rows": min(len(queue), 50),
+            "included_direct": 0,
+            "included_resolved": 0,
+            "resolver_attempted": 0,
+            "resolver_resolved": 0,
+            "duplicate_rows": 0,
+            "unresolved_rows": 0,
+            "budget_blocked_rows": 0,
+            "resolve_budget": 0,
+            "row_diagnostics": [],
+        }
+
+    if len(youtube_ids) >= 2:
+        temp_youtube_playlist = "https://www.youtube.com/watch_videos?video_ids=" + ",".join(youtube_ids[:50])
+        base_app.render_platform_link("Open Temporary YouTube Playlist", temp_youtube_playlist)
+    else:
+        base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
+    target_rows = int(yt_stats.get("target_rows", 0) or 0)
+    playable_rows = int(yt_stats.get("playable_count", 0) or 0)
+    linked_rows = int(yt_stats.get("playable_linked_rows", playable_rows) or playable_rows)
+    if target_rows > 0:
+        coverage_pct = (linked_rows / target_rows) * 100.0
+        duplicate_collapsed = max(0, linked_rows - playable_rows)
+        base_app.st.caption(
+            "Temporary playlist coverage: "
+            f"{linked_rows}/{target_rows} rows linked ({coverage_pct:.0f}%). "
+            f"Unique YouTube IDs: {playable_rows}. "
+            f"Direct: {int(yt_stats.get('included_direct', 0) or 0)} · "
+            f"Resolved: {int(yt_stats.get('included_resolved', 0) or 0)} · "
+            f"Resolver attempts: {int(yt_stats.get('resolver_attempted', 0) or 0)}."
+        )
+        if duplicate_collapsed > 0:
+            base_app.st.caption(f"Duplicate IDs collapsed: {duplicate_collapsed}")
+    base_app.st.session_state["_yt_playlist_row_diagnostics"] = (
+        yt_stats.get("row_diagnostics", []) if isinstance(yt_stats.get("row_diagnostics", []), list) else []
+    )
+
     if should_emit_request_logs:
         emit_response_sent(
             request_id=request_id,
@@ -733,9 +454,7 @@ def main() -> None:
             playlist_track_count=len(queue),
             latency_ms=int((time.perf_counter() - request_started_at) * 1000),
         )
-        base_app.st.session_state["lighter_request_log_pending"] = False
-    _render_player_section(queue)
-    _render_temp_playlist_section(queue, queue_signature)
+        base_app.st.session_state["public_request_log_pending"] = False
 
 
 if __name__ == "__main__":
