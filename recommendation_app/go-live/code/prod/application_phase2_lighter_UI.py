@@ -25,6 +25,8 @@ from prod.go_live_structured_logging import (
     emit_seed_resolution_completed,
 )
 
+PUBLIC_UI_CACHE_VERSION = "studio_dev_playlist_v1"
+
 
 def _render_hidden_startup_health(status: str) -> None:
     base_app.st.markdown(
@@ -128,12 +130,47 @@ def _load_cached_queue(signature: str) -> pd.DataFrame | None:
     records = base_app.st.session_state.get("public_result_queue_records")
     if not isinstance(records, list) or not records:
         return None
-    return pd.DataFrame.from_records(records)
+    queue = pd.DataFrame.from_records(records)
+    required_columns = {
+        "position",
+        "duration_text",
+        "spotify_url",
+        "youtube_url",
+        "queue_label",
+        "artist",
+        "track",
+        "duration_ms",
+        "momentum_score",
+    }
+    if not required_columns.issubset(set(queue.columns)):
+        return None
+    return queue
 
 
 def _store_cached_queue(signature: str, queue: pd.DataFrame) -> None:
     base_app.st.session_state["public_result_signature"] = signature
     base_app.st.session_state["public_result_queue_records"] = queue.to_dict("records")
+
+
+def _reset_public_cached_state() -> None:
+    for key in [
+        "public_result_signature",
+        "public_result_queue_records",
+        "public_selected_position",
+        "public_temp_playlist_signature",
+        "public_temp_playlist_payload",
+        "public_request_id",
+        "public_request_log_pending",
+        "public_logged_signature",
+    ]:
+        base_app.st.session_state.pop(key, None)
+
+
+def _ensure_public_cache_version() -> None:
+    current = str(base_app.st.session_state.get("public_ui_cache_version", "") or "").strip()
+    if current != PUBLIC_UI_CACHE_VERSION:
+        _reset_public_cached_state()
+        base_app.st.session_state["public_ui_cache_version"] = PUBLIC_UI_CACHE_VERSION
 
 
 def main() -> None:
@@ -168,6 +205,7 @@ def main() -> None:
 
     dataset_snapshot_id = _dataset_snapshot_id(source_path)
     session_id = _session_id()
+    _ensure_public_cache_version()
 
     seed_weights, experience_state = base_app.render_seed_experience(data)
 
