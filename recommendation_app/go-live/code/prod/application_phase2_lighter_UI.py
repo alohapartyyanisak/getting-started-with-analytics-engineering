@@ -183,6 +183,11 @@ def main() -> None:
             f"Playlist window: {lower_window} to {upper_window} mins "
             f"({base_app.format_hours_minutes(lower_window)} to {base_app.format_hours_minutes(upper_window)})"
         )
+        generate_clicked = base_app.st.button(
+            "Generate Playlist",
+            use_container_width=True,
+            key="public_generate_playlist_button",
+        )
 
     seed_weight_items = tuple(sorted((str(name), float(weight)) for name, weight in seed_weights.items()))
     preferred_artist_weight_items: tuple[tuple[str, float], ...] = ()
@@ -199,11 +204,17 @@ def main() -> None:
         preferred_artist_weight_items=preferred_artist_weight_items,
         include_seed_tracks=include_seed_tracks,
     )
-    if base_app.st.session_state.get("public_logged_signature") != generation_signature:
+    if generate_clicked:
         request_id = str(uuid.uuid4())
+        base_app.st.session_state["public_generated_signature"] = generation_signature
         base_app.st.session_state["public_logged_signature"] = generation_signature
         base_app.st.session_state["public_request_id"] = request_id
         base_app.st.session_state["public_request_log_pending"] = True
+
+    if base_app.st.session_state.get("public_generated_signature") != generation_signature:
+        base_app.st.info("Choose your songs or artists, tune the controls, then click Generate Playlist.")
+        base_app.st.stop()
+
     request_id = str(base_app.st.session_state.get("public_request_id", "") or "").strip()
     should_emit_request_logs = bool(request_id) and bool(base_app.st.session_state.get("public_request_log_pending", False))
     request_started_at = time.perf_counter()
