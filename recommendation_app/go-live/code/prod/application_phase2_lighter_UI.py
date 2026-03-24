@@ -105,6 +105,36 @@ def _render_spotify_embed(track_id: str) -> None:
 
 
 
+def _queue_from_playlist(playlist: pd.DataFrame) -> pd.DataFrame:
+    queue = playlist.copy().reset_index(drop=True)
+    queue["position"] = queue.index + 1
+    queue["duration_text"] = queue["duration_ms"].apply(base_app.format_track_duration)
+    queue["spotify_url"] = queue.apply(lambda row: row.get("spotify_link") or row.get("url_spotify") or "", axis=1)
+    queue["youtube_url"] = queue.apply(
+        lambda row: base_app.prefer_direct_youtube_url(row.get("youtube_link"), row.get("url_youtube")),
+        axis=1,
+    )
+    queue["queue_label"] = queue.apply(
+        lambda row: f'{int(row["position"]):02d}. {row["artist"]} - {row["track"]} ({row["duration_text"]})',
+        axis=1,
+    )
+    return queue
+
+
+def _load_cached_queue(signature: str) -> pd.DataFrame | None:
+    if base_app.st.session_state.get("public_result_signature") != signature:
+        return None
+    records = base_app.st.session_state.get("public_result_queue_records")
+    if not isinstance(records, list) or not records:
+        return None
+    return pd.DataFrame.from_records(records)
+
+
+def _store_cached_queue(signature: str, queue: pd.DataFrame) -> None:
+    base_app.st.session_state["public_result_signature"] = signature
+    base_app.st.session_state["public_result_queue_records"] = queue.to_dict("records")
+
+
 def main() -> None:
     patch_base_app_for_phase2()
 
@@ -208,128 +238,123 @@ def main() -> None:
     request_id = str(base_app.st.session_state.get("public_request_id", "") or "").strip()
     should_emit_request_logs = bool(request_id) and bool(base_app.st.session_state.get("public_request_log_pending", False))
     request_started_at = time.perf_counter()
+    queue = _load_cached_queue(generation_signature)
 
-    if should_emit_request_logs:
-        emit_request_received(
-            request_id=request_id,
-            session_id=session_id,
-            dataset_snapshot_id=dataset_snapshot_id,
-            mode=_normalize_mode(str(experience_state.get("experience_mode", "Self Mix"))),
-            start_mode=_normalize_start_mode(experience_state),
-            target_minutes=target_minutes,
-            tolerance_minutes=base_app.PLAYLIST_TOLERANCE_MINUTES,
-            platform_bias_spotify_pct=spotify_weight_pct,
-            discovery_hits_pct=discovery_hits_pct,
-            vibe_option=str(experience_state.get("quick_vibe") or base_app.st.session_state.get("self_mix_vibe_option") or ""),
-            final_pick_count=len(seed_weight_items),
-        )
-        emit_seed_resolution_completed(
-            request_id=request_id,
-            session_id=session_id,
-            dataset_snapshot_id=dataset_snapshot_id,
-            selected_artists_count=len(base_app.st.session_state.get("selected_seed_artists", [])),
-            selected_songs_count=len(base_app.st.session_state.get("selected_seed_songs", [])),
-            seed_display_names=[str(name) for name, _weight in seed_weight_items],
-            seed_artist_weights={str(name): float(weight) for name, weight in preferred_artist_weight_items},
-        )
-
-    try:
-        ranking_started_at = time.perf_counter()
-        recommendations = base_app.recommend_tracks_cached(
-            data=data,
-            seed_weight_items=seed_weight_items,
-            mood=mood,
-            spotify_weight=spotify_weight_pct / 100.0,
-            discovery_mode=hidden_gems_pct / 100.0,
-            top_k=180,
-            exclude_seed_tracks=not include_seed_tracks,
-            preferred_artist_weight_items=preferred_artist_weight_items,
-        )
-        ranking_latency_ms = int((time.perf_counter() - ranking_started_at) * 1000)
+    if queue is None:
         if should_emit_request_logs:
-            top_display_names = recommendations.get("display_name", pd.Series(dtype=str)).astype(str).head(5).tolist()
-            emit_ranking_completed(
+            emit_request_received(
                 request_id=request_id,
                 session_id=session_id,
                 dataset_snapshot_id=dataset_snapshot_id,
-                candidate_pool_size=len(data),
-                ranked_count=len(recommendations),
-                top_display_names=top_display_names,
-                latency_ms=ranking_latency_ms,
+                mode=_normalize_mode(str(experience_state.get("experience_mode", "Self Mix"))),
+                start_mode=_normalize_start_mode(experience_state),
+                target_minutes=target_minutes,
+                tolerance_minutes=base_app.PLAYLIST_TOLERANCE_MINUTES,
+                platform_bias_spotify_pct=spotify_weight_pct,
+                discovery_hits_pct=discovery_hits_pct,
+                vibe_option=str(experience_state.get("quick_vibe") or base_app.st.session_state.get("self_mix_vibe_option") or ""),
+                final_pick_count=len(seed_weight_items),
             )
-
-        playlist_started_at = time.perf_counter()
-        playlist = base_app.build_duration_playlist_cached(
-            recommendations=recommendations,
-            target_minutes=target_minutes,
-            tolerance_minutes=base_app.PLAYLIST_TOLERANCE_MINUTES,
-            candidate_limit=180,
-            max_tracks=50,
-        )
-        playlist_latency_ms = int((time.perf_counter() - playlist_started_at) * 1000)
-    except Exception as exc:
-        if should_emit_request_logs:
-            emit_error(
+            emit_seed_resolution_completed(
                 request_id=request_id,
                 session_id=session_id,
                 dataset_snapshot_id=dataset_snapshot_id,
-                error_type=type(exc).__name__,
-                error_code="REQUEST_PIPELINE_FAILURE",
-                error_message=str(exc),
-                stage="ranking_or_playlist",
-                latency_ms=int((time.perf_counter() - request_started_at) * 1000),
+                selected_artists_count=len(base_app.st.session_state.get("selected_seed_artists", [])),
+                selected_songs_count=len(base_app.st.session_state.get("selected_seed_songs", [])),
+                seed_display_names=[str(name) for name, _weight in seed_weight_items],
+                seed_artist_weights={str(name): float(weight) for name, weight in preferred_artist_weight_items},
             )
-            base_app.st.session_state["public_request_log_pending"] = False
-        raise
 
-    playlist["mood_tag"] = mood
-    if should_emit_request_logs:
-        playlist_total_seconds = int((playlist.get("duration_ms", pd.Series(dtype=int)).fillna(0).sum()) / 1000)
-        target_seconds = int(target_minutes * 60)
-        window_min_seconds = int((target_minutes - base_app.PLAYLIST_TOLERANCE_MINUTES) * 60)
-        window_max_seconds = int((target_minutes + base_app.PLAYLIST_TOLERANCE_MINUTES) * 60)
-        emit_playlist_optimized(
-            request_id=request_id,
-            session_id=session_id,
-            dataset_snapshot_id=dataset_snapshot_id,
-            playlist_track_count=len(playlist),
-            playlist_total_seconds=playlist_total_seconds,
-            target_seconds=target_seconds,
-            window_min_seconds=window_min_seconds,
-            window_max_seconds=window_max_seconds,
-            in_target_window=window_min_seconds <= playlist_total_seconds <= window_max_seconds,
-            optimizer_latency_ms=playlist_latency_ms,
-        )
+        try:
+            ranking_started_at = time.perf_counter()
+            recommendations = base_app.recommend_tracks_cached(
+                data=data,
+                seed_weight_items=seed_weight_items,
+                mood=mood,
+                spotify_weight=spotify_weight_pct / 100.0,
+                discovery_mode=hidden_gems_pct / 100.0,
+                top_k=180,
+                exclude_seed_tracks=not include_seed_tracks,
+                preferred_artist_weight_items=preferred_artist_weight_items,
+            )
+            ranking_latency_ms = int((time.perf_counter() - ranking_started_at) * 1000)
+            if should_emit_request_logs:
+                top_display_names = recommendations.get("display_name", pd.Series(dtype=str)).astype(str).head(5).tolist()
+                emit_ranking_completed(
+                    request_id=request_id,
+                    session_id=session_id,
+                    dataset_snapshot_id=dataset_snapshot_id,
+                    candidate_pool_size=len(data),
+                    ranked_count=len(recommendations),
+                    top_display_names=top_display_names,
+                    latency_ms=ranking_latency_ms,
+                )
 
-    if playlist.empty:
+            playlist_started_at = time.perf_counter()
+            playlist = base_app.build_duration_playlist_cached(
+                recommendations=recommendations,
+                target_minutes=target_minutes,
+                tolerance_minutes=base_app.PLAYLIST_TOLERANCE_MINUTES,
+                candidate_limit=180,
+                max_tracks=50,
+            )
+            playlist_latency_ms = int((time.perf_counter() - playlist_started_at) * 1000)
+        except Exception as exc:
+            if should_emit_request_logs:
+                emit_error(
+                    request_id=request_id,
+                    session_id=session_id,
+                    dataset_snapshot_id=dataset_snapshot_id,
+                    error_type=type(exc).__name__,
+                    error_code="REQUEST_PIPELINE_FAILURE",
+                    error_message=str(exc),
+                    stage="ranking_or_playlist",
+                    latency_ms=int((time.perf_counter() - request_started_at) * 1000),
+                )
+                base_app.st.session_state["public_request_log_pending"] = False
+            raise
+
+        playlist["mood_tag"] = mood
         if should_emit_request_logs:
-            emit_error(
+            playlist_total_seconds = int((playlist.get("duration_ms", pd.Series(dtype=int)).fillna(0).sum()) / 1000)
+            target_seconds = int(target_minutes * 60)
+            window_min_seconds = int((target_minutes - base_app.PLAYLIST_TOLERANCE_MINUTES) * 60)
+            window_max_seconds = int((target_minutes + base_app.PLAYLIST_TOLERANCE_MINUTES) * 60)
+            emit_playlist_optimized(
                 request_id=request_id,
                 session_id=session_id,
                 dataset_snapshot_id=dataset_snapshot_id,
-                error_type="NoPlaylistGenerated",
-                error_code="EMPTY_PLAYLIST",
-                error_message="No playlist could be generated for this duration target.",
-                stage="playlist_optimized",
-                latency_ms=int((time.perf_counter() - request_started_at) * 1000),
+                playlist_track_count=len(playlist),
+                playlist_total_seconds=playlist_total_seconds,
+                target_seconds=target_seconds,
+                window_min_seconds=window_min_seconds,
+                window_max_seconds=window_max_seconds,
+                in_target_window=window_min_seconds <= playlist_total_seconds <= window_max_seconds,
+                optimizer_latency_ms=playlist_latency_ms,
             )
-            base_app.st.session_state["public_request_log_pending"] = False
-        base_app.st.warning("No playlist could be generated for this duration target. Try different seed selections.")
-        base_app.st.stop()
+
+        if playlist.empty:
+            if should_emit_request_logs:
+                emit_error(
+                    request_id=request_id,
+                    session_id=session_id,
+                    dataset_snapshot_id=dataset_snapshot_id,
+                    error_type="NoPlaylistGenerated",
+                    error_code="EMPTY_PLAYLIST",
+                    error_message="No playlist could be generated for this duration target.",
+                    stage="playlist_optimized",
+                    latency_ms=int((time.perf_counter() - request_started_at) * 1000),
+                )
+                base_app.st.session_state["public_request_log_pending"] = False
+            base_app.st.warning("No playlist could be generated for this duration target. Try different seed selections.")
+            base_app.st.stop()
+
+        queue = _queue_from_playlist(playlist)
+        _store_cached_queue(generation_signature, queue)
+        base_app.st.session_state.pop("public_temp_playlist_signature", None)
+        base_app.st.session_state.pop("public_temp_playlist_payload", None)
 
     base_app.st.subheader("Playable Playlist")
-    queue = playlist.copy().reset_index(drop=True)
-    queue["position"] = queue.index + 1
-    queue["duration_text"] = queue["duration_ms"].apply(base_app.format_track_duration)
-    queue["spotify_url"] = queue.apply(lambda row: row.get("spotify_link") or row.get("url_spotify") or "", axis=1)
-    queue["youtube_url"] = queue.apply(
-        lambda row: base_app.prefer_direct_youtube_url(row.get("youtube_link"), row.get("url_youtube")),
-        axis=1,
-    )
-    queue["queue_label"] = queue.apply(
-        lambda row: f'{int(row["position"]):02d}. {row["artist"]} - {row["track"]} ({row["duration_text"]})',
-        axis=1,
-    )
 
     player_col, mode_col = base_app.st.columns([3, 2])
     with player_col:
@@ -378,60 +403,78 @@ def main() -> None:
         elif selected_spotify_track_id:
             _render_spotify_embed(selected_spotify_track_id)
 
-    with base_app.st.spinner("Building temporary YouTube playlist from playable URLs..."):
-        youtube_ids_result = base_app.build_playable_youtube_ids(
-            queue,
-            max_ids=50,
-            max_live_resolves=16,
-            live_timeout=3,
-            min_ids_required=2,
-            fill_to_max=False,
-            max_total_seconds=10.0,
-            return_stats=True,
+    with base_app.st.sidebar:
+        build_temp_playlist = base_app.st.button(
+            "Build Temporary YouTube Playlist",
+            use_container_width=True,
+            key="public_build_temp_playlist",
         )
-    if isinstance(youtube_ids_result, tuple):
-        youtube_ids, yt_stats = youtube_ids_result
-    else:
-        youtube_ids = youtube_ids_result
-        yt_stats = {
-            "playable_count": len(youtube_ids),
-            "playable_linked_rows": len(youtube_ids),
-            "target_rows": min(len(queue), 50),
-            "included_direct": 0,
-            "included_resolved": 0,
-            "resolver_attempted": 0,
-            "resolver_resolved": 0,
-            "duplicate_rows": 0,
-            "unresolved_rows": 0,
-            "budget_blocked_rows": 0,
-            "resolve_budget": 0,
-            "row_diagnostics": [],
+
+    if build_temp_playlist:
+        with base_app.st.spinner("Building temporary YouTube playlist from playable URLs..."):
+            youtube_ids_result = base_app.build_playable_youtube_ids(
+                queue,
+                max_ids=50,
+                max_live_resolves=16,
+                live_timeout=3,
+                min_ids_required=2,
+                fill_to_max=False,
+                max_total_seconds=10.0,
+                return_stats=True,
+            )
+        if isinstance(youtube_ids_result, tuple):
+            youtube_ids, yt_stats = youtube_ids_result
+        else:
+            youtube_ids = youtube_ids_result
+            yt_stats = {
+                "playable_count": len(youtube_ids),
+                "playable_linked_rows": len(youtube_ids),
+                "target_rows": min(len(queue), 50),
+                "included_direct": 0,
+                "included_resolved": 0,
+                "resolver_attempted": 0,
+                "resolver_resolved": 0,
+                "duplicate_rows": 0,
+                "unresolved_rows": 0,
+                "budget_blocked_rows": 0,
+                "resolve_budget": 0,
+                "row_diagnostics": [],
+            }
+        base_app.st.session_state["public_temp_playlist_signature"] = generation_signature
+        base_app.st.session_state["public_temp_playlist_payload"] = {
+            "youtube_ids": youtube_ids,
+            "yt_stats": yt_stats,
         }
 
-    if len(youtube_ids) >= 2:
-        temp_youtube_playlist = "https://www.youtube.com/watch_videos?video_ids=" + ",".join(youtube_ids[:50])
-        base_app.render_platform_link("Open Temporary YouTube Playlist", temp_youtube_playlist)
-    else:
-        base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
-    target_rows = int(yt_stats.get("target_rows", 0) or 0)
-    playable_rows = int(yt_stats.get("playable_count", 0) or 0)
-    linked_rows = int(yt_stats.get("playable_linked_rows", playable_rows) or playable_rows)
-    if target_rows > 0:
-        coverage_pct = (linked_rows / target_rows) * 100.0
-        duplicate_collapsed = max(0, linked_rows - playable_rows)
-        base_app.st.caption(
-            "Temporary playlist coverage: "
-            f"{linked_rows}/{target_rows} rows linked ({coverage_pct:.0f}%). "
-            f"Unique YouTube IDs: {playable_rows}. "
-            f"Direct: {int(yt_stats.get('included_direct', 0) or 0)} · "
-            f"Resolved: {int(yt_stats.get('included_resolved', 0) or 0)} · "
-            f"Resolver attempts: {int(yt_stats.get('resolver_attempted', 0) or 0)}."
+    temp_signature = base_app.st.session_state.get("public_temp_playlist_signature")
+    temp_payload = base_app.st.session_state.get("public_temp_playlist_payload")
+    if temp_signature == generation_signature and isinstance(temp_payload, dict):
+        youtube_ids = temp_payload.get("youtube_ids", [])
+        yt_stats = temp_payload.get("yt_stats", {})
+        if len(youtube_ids) >= 2:
+            temp_youtube_playlist = "https://www.youtube.com/watch_videos?video_ids=" + ",".join(youtube_ids[:50])
+            base_app.render_platform_link("Open Temporary YouTube Playlist", temp_youtube_playlist)
+        else:
+            base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
+        target_rows = int(yt_stats.get("target_rows", 0) or 0)
+        playable_rows = int(yt_stats.get("playable_count", 0) or 0)
+        linked_rows = int(yt_stats.get("playable_linked_rows", playable_rows) or playable_rows)
+        if target_rows > 0:
+            coverage_pct = (linked_rows / target_rows) * 100.0
+            duplicate_collapsed = max(0, linked_rows - playable_rows)
+            base_app.st.caption(
+                "Temporary playlist coverage: "
+                f"{linked_rows}/{target_rows} rows linked ({coverage_pct:.0f}%). "
+                f"Unique YouTube IDs: {playable_rows}. "
+                f"Direct: {int(yt_stats.get('included_direct', 0) or 0)} · "
+                f"Resolved: {int(yt_stats.get('included_resolved', 0) or 0)} · "
+                f"Resolver attempts: {int(yt_stats.get('resolver_attempted', 0) or 0)}."
+            )
+            if duplicate_collapsed > 0:
+                base_app.st.caption(f"Duplicate IDs collapsed: {duplicate_collapsed}")
+        base_app.st.session_state["_yt_playlist_row_diagnostics"] = (
+            yt_stats.get("row_diagnostics", []) if isinstance(yt_stats.get("row_diagnostics", []), list) else []
         )
-        if duplicate_collapsed > 0:
-            base_app.st.caption(f"Duplicate IDs collapsed: {duplicate_collapsed}")
-    base_app.st.session_state["_yt_playlist_row_diagnostics"] = (
-        yt_stats.get("row_diagnostics", []) if isinstance(yt_stats.get("row_diagnostics", []), list) else []
-    )
 
     if should_emit_request_logs:
         emit_response_sent(
