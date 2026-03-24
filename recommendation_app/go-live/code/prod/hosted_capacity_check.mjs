@@ -80,8 +80,7 @@ async function waitForCapacityBasePage(page) {
     }
 
     await generateButton.click({ force: true });
-    await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
-    await page.getByText('Build Temporary YouTube Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
     await page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
     return { app_kind: 'lighter', generated: true };
   }
@@ -90,8 +89,8 @@ async function waitForCapacityBasePage(page) {
     () => {
       const bodyText = document.body?.innerText || '';
       return (
-        bodyText.includes('Playable Playlist') &&
-        bodyText.includes('Now Playing')
+        bodyText.includes('Now Playing') &&
+        bodyText.includes('Playback')
       );
     },
     null,
@@ -102,7 +101,7 @@ async function waitForCapacityBasePage(page) {
     return { app_kind: 'lighter', generated: true };
   }
 
-  await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+  await page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
   return { app_kind: 'developer', generated: false };
 }
 

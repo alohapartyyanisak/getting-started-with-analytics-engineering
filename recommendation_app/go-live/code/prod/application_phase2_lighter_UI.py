@@ -459,8 +459,6 @@ def main() -> None:
     sidebar_temp_playlist_payload = temp_playlist_payload
     sidebar_temp_playlist_duplicate_collapsed = duplicate_collapsed
 
-    base_app.st.subheader("Playable Playlist")
-
     player_col, mode_col = base_app.st.columns([3, 2])
     with player_col:
         selected_label = base_app.st.selectbox("Now Playing", options=queue["queue_label"].tolist())

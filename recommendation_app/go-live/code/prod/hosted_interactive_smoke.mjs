@@ -125,7 +125,7 @@ async function waitForBasePage(page) {
         page.waitForFunction(
           () => {
             const bodyText = document.body?.innerText || '';
-            return bodyText.includes('Generate Playlist') || bodyText.includes('Playable Playlist');
+            return bodyText.includes('Generate Playlist') || bodyText.includes('Now Playing');
           },
           null,
           { timeout: 35000 },
@@ -133,7 +133,7 @@ async function waitForBasePage(page) {
       );
     } else {
       readyChecks.push(
-        page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
+        page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
       );
     }
 
@@ -152,13 +152,13 @@ async function waitForBasePage(page) {
     await page.waitForFunction(
       () => {
         const bodyText = document.body?.innerText || '';
-        return bodyText.includes('Generate Playlist') || bodyText.includes('Playable Playlist');
+        return bodyText.includes('Generate Playlist') || bodyText.includes('Now Playing');
       },
       null,
       { timeout: 60000 },
     );
   } else {
-    await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
   }
 }
 
@@ -190,7 +190,7 @@ async function waitForHydratedInteractiveControls(page) {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
     await sleep(4000);
     await waitForStartupHealthReady(page, 60000);
-    await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
     await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
     await waitForInteractiveControls(page);
     return true;
@@ -365,7 +365,7 @@ async function waitForLighterReady(page) {
       return (
         bodyText.includes('DJ Mixing Station Studio') &&
         bodyText.includes('Choose your move') &&
-        (bodyText.includes('Generate Playlist') || bodyText.includes('Playable Playlist'))
+        (bodyText.includes('Generate Playlist') || bodyText.includes('Now Playing'))
       );
     },
     null,
@@ -410,7 +410,7 @@ async function runDeveloperFlow(page, attempt) {
   await waitForFinalPickCount(page, ARTISTS.length);
   attempt.checks.final_pick_box_updated = true;
 
-  await page.getByText('Playable Playlist', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
+  await page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
   attempt.checks.playable_playlist_visible = true;
 
   const playlistOutcome = await waitForPlaylistGenerationOutcome(page);
@@ -439,8 +439,8 @@ async function runLighterFlow(page, attempt) {
     () => {
       const bodyText = document.body?.innerText || '';
       return (
-        bodyText.includes('Playable Playlist') &&
-        bodyText.includes('Now Playing')
+        bodyText.includes('Now Playing') &&
+        bodyText.includes('Playback')
       );
     },
     null,
