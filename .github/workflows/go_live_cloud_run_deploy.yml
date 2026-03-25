@@ -41,9 +41,9 @@ jobs:
       id-token: write
 
     env:
-      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT || secrets.GCP_SERVICE_ACCOUNT }}
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
       GCP_REGION: ${{ vars.GCP_REGION }}
       GAR_REPOSITORY: ${{ vars.GAR_REPOSITORY }}
@@ -51,7 +51,7 @@ jobs:
       APP_BASE_URL: ${{ vars.APP_BASE_URL }}
       CLOUD_RUN_MEMORY: ${{ vars.CLOUD_RUN_MEMORY }}
       CLOUD_RUN_CONCURRENCY: ${{ vars.CLOUD_RUN_CONCURRENCY }}
-      GCS_DATASET_URI: ${{ secrets.GCS_DATASET_URI }}
+      GCS_DATASET_URI: ${{ vars.GCS_DATASET_URI || secrets.GCS_DATASET_URI }}
       GO_LIVE_DATASET_STORAGE_ROOT: /tmp/go-live/data/storage
       LANGSMITH_PROJECT: ${{ vars.LANGSMITH_PROJECT }}
       LANGSMITH_API_URL: ${{ vars.LANGSMITH_API_URL }}

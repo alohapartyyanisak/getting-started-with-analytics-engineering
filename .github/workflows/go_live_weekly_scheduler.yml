@@ -42,10 +42,10 @@ jobs:
     env:
       GO_LIVE_DATASET_STORAGE_ROOT: recommendation_app/go-live/data/storage
       GO_LIVE_DATASET_POINTER_FILE: latest.json
-      GCS_DATASET_URI: ${{ secrets.GCS_DATASET_URI }}
-      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      GCS_DATASET_URI: ${{ vars.GCS_DATASET_URI || secrets.GCS_DATASET_URI }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER || secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ vars.GCP_SERVICE_ACCOUNT || secrets.GCP_SERVICE_ACCOUNT }}
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
       PROD_SCHED_MODE: ${{ github.event.inputs.mode || 'problem_queue_bounded' }}
       PROD_SCHED_PROBLEM_MAX_ROWS: ${{ github.event.inputs.problem_max_rows || '1200' }}
