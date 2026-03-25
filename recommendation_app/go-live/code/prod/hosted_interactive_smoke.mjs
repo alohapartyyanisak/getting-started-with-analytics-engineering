@@ -382,7 +382,15 @@ async function waitForDeveloperResultSurface(page) {
   await page.waitForFunction(
     () => {
       const bodyText = document.body?.innerText || '';
+      const hiddenResultReady = (document.querySelector('[data-testid="dev-result-surface-ready"]')?.textContent || '').trim() === 'true';
+      const hiddenPlayerReady = (document.querySelector('[data-testid="dev-player-surface-ready"]')?.textContent || '').trim() === 'true';
+      const hiddenTempPlaylistReady = (document.querySelector('[data-testid="dev-temp-playlist-ready"]')?.textContent || '').trim() === 'true';
+      const hiddenDebugReady = (document.querySelector('[data-testid="dev-debug-table-ready"]')?.textContent || '').trim() === 'true';
       return (
+        hiddenResultReady ||
+        hiddenPlayerReady ||
+        hiddenTempPlaylistReady ||
+        hiddenDebugReady ||
         bodyText.includes('Now Playing') ||
         bodyText.includes('Playback') ||
         bodyText.includes('Open Temporary YouTube Playlist') ||
@@ -448,6 +456,16 @@ async function runDeveloperFlow(page, attempt) {
 
   await waitForDeveloperResultSurface(page);
   attempt.checks.playable_playlist_visible = true;
+
+  const developerResultDebug = await page.evaluate(() => ({
+    hiddenStartupHealth: (document.querySelector('[data-testid="startup-health-status"]')?.textContent || '').trim(),
+    hiddenFinalPicks: (document.querySelector('[data-testid="dev-final-picks-count"]')?.textContent || '').trim(),
+    hiddenResultSurfaceReady: (document.querySelector('[data-testid="dev-result-surface-ready"]')?.textContent || '').trim(),
+    hiddenPlayerSurfaceReady: (document.querySelector('[data-testid="dev-player-surface-ready"]')?.textContent || '').trim(),
+    hiddenTempPlaylistReady: (document.querySelector('[data-testid="dev-temp-playlist-ready"]')?.textContent || '').trim(),
+    hiddenDebugTableReady: (document.querySelector('[data-testid="dev-debug-table-ready"]')?.textContent || '').trim(),
+  }));
+  attempt.dom_debug = { ...(attempt.dom_debug || {}), ...developerResultDebug };
 
   const playlistOutcome = await waitForPlaylistGenerationOutcome(page);
   attempt.checks.temp_playlist_link_visible = playlistOutcome.tempLinkVisible;

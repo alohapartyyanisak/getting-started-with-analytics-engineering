@@ -28,6 +28,7 @@ _ORIGINAL_BUILD_PLAYABLE_YOUTUBE_IDS = base_app.build_playable_youtube_ids
 _ORIGINAL_RENDER_MODERN_DEBUG_TABLE = base_app.render_modern_debug_table
 _ORIGINAL_ST_VIDEO = base_app.st.video
 _ORIGINAL_COMPONENTS_HTML = base_app.components.html
+_ORIGINAL_RENDER_PLATFORM_LINK = base_app.render_platform_link
 
 
 @base_app.st.cache_data(show_spinner=False)
@@ -112,6 +113,51 @@ def _defer_heavy_rendering() -> bool:
     return _current_render_count() <= 1
 
 
+def _reset_dev_smoke_markers() -> None:
+    base_app.st.session_state["_go_live_dev_result_surface_ready"] = False
+    base_app.st.session_state["_go_live_dev_player_surface_ready"] = False
+    base_app.st.session_state["_go_live_dev_temp_playlist_ready"] = False
+    base_app.st.session_state["_go_live_dev_debug_table_ready"] = False
+
+
+def _render_hidden_phase2_markers() -> None:
+    startup_health = str(base_app.st.session_state.get("startup_health_status", "Unknown") or "Unknown").strip()
+    final_pick_count = (
+        len(base_app.st.session_state.get("selected_seed_artists", []))
+        + len(base_app.st.session_state.get("selected_seed_songs", []))
+    )
+    result_surface_ready = str(
+        bool(base_app.st.session_state.get("_go_live_dev_result_surface_ready", False))
+    ).lower()
+    player_surface_ready = str(
+        bool(base_app.st.session_state.get("_go_live_dev_player_surface_ready", False))
+    ).lower()
+    temp_playlist_ready = str(
+        bool(base_app.st.session_state.get("_go_live_dev_temp_playlist_ready", False))
+    ).lower()
+    debug_table_ready = str(
+        bool(base_app.st.session_state.get("_go_live_dev_debug_table_ready", False))
+    ).lower()
+    base_app.st.markdown(
+        (
+            '<div data-testid="startup-health-status" style="display:none">{startup}</div>'
+            '<div data-testid="dev-final-picks-count" style="display:none">{final_picks}</div>'
+            '<div data-testid="dev-result-surface-ready" style="display:none">{result_ready}</div>'
+            '<div data-testid="dev-player-surface-ready" style="display:none">{player_ready}</div>'
+            '<div data-testid="dev-temp-playlist-ready" style="display:none">{temp_ready}</div>'
+            '<div data-testid="dev-debug-table-ready" style="display:none">{debug_ready}</div>'
+        ).format(
+            startup=startup_health,
+            final_picks=final_pick_count,
+            result_ready=result_surface_ready,
+            player_ready=player_surface_ready,
+            temp_ready=temp_playlist_ready,
+            debug_ready=debug_table_ready,
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def build_playable_youtube_ids_phase2(*args: Any, **kwargs: Any):
     if _defer_heavy_rendering():
         queue = args[0] if args else kwargs.get("queue")
@@ -137,6 +183,9 @@ def build_playable_youtube_ids_phase2(*args: Any, **kwargs: Any):
 
 
 def render_modern_debug_table_phase2(playlist: pd.DataFrame) -> None:
+    if not playlist.empty:
+        base_app.st.session_state["_go_live_dev_debug_table_ready"] = True
+        base_app.st.session_state["_go_live_dev_result_surface_ready"] = True
     if _defer_heavy_rendering():
         base_app.st.caption("Recommendation Debug View loads after the first interaction.")
         return
@@ -144,6 +193,8 @@ def render_modern_debug_table_phase2(playlist: pd.DataFrame) -> None:
 
 
 def st_video_phase2(*args: Any, **kwargs: Any):
+    base_app.st.session_state["_go_live_dev_player_surface_ready"] = True
+    base_app.st.session_state["_go_live_dev_result_surface_ready"] = True
     if _defer_heavy_rendering():
         base_app.st.caption("Playback embed loads after the first interaction.")
         return None
@@ -151,14 +202,29 @@ def st_video_phase2(*args: Any, **kwargs: Any):
 
 
 def components_html_phase2(*args: Any, **kwargs: Any):
+    base_app.st.session_state["_go_live_dev_player_surface_ready"] = True
+    base_app.st.session_state["_go_live_dev_result_surface_ready"] = True
     if _defer_heavy_rendering():
         return None
     return _ORIGINAL_COMPONENTS_HTML(*args, **kwargs)
 
 
+def render_platform_link_phase2(label: str, url: str) -> None:
+    text = str(label or "").strip()
+    if text:
+        base_app.st.session_state["_go_live_dev_result_surface_ready"] = True
+    if text in {"Spotify", "YouTube"}:
+        base_app.st.session_state["_go_live_dev_player_surface_ready"] = True
+    if text == "Open Temporary YouTube Playlist":
+        base_app.st.session_state["_go_live_dev_temp_playlist_ready"] = True
+    _ORIGINAL_RENDER_PLATFORM_LINK(label, url)
+
+
 def main_phase2() -> None:
+    _reset_dev_smoke_markers()
     base_app.st.session_state["_go_live_render_count"] = _current_render_count() + 1
     _ORIGINAL_MAIN()
+    _render_hidden_phase2_markers()
 
 
 def patch_base_app_for_phase2() -> None:
@@ -172,6 +238,7 @@ def patch_base_app_for_phase2() -> None:
     base_app.get_seed_ui_options = get_seed_ui_options_phase2
     base_app.build_playable_youtube_ids = build_playable_youtube_ids_phase2
     base_app.render_modern_debug_table = render_modern_debug_table_phase2
+    base_app.render_platform_link = render_platform_link_phase2
     base_app.st.video = st_video_phase2
     base_app.components.html = components_html_phase2
     base_app.main = main_phase2
