@@ -23,6 +23,10 @@ on:
         description: "Optional public base URL override for smoke checks"
         required: false
         default: ""
+      runtime_secret_source:
+        description: "How app runtime secrets are provided to Cloud Run"
+        required: false
+        default: "github_secrets"
 
 concurrency:
   group: go-live-cloud-run-deploy
@@ -55,6 +59,7 @@ jobs:
       APP_VARIANT: ${{ github.event.inputs.app_variant || 'developer' }}
       CLOUD_RUN_SERVICE_OVERRIDE: ${{ github.event.inputs.cloud_run_service_override || '' }}
       PUBLIC_BASE_URL_OVERRIDE: ${{ github.event.inputs.public_base_url || '' }}
+      RUNTIME_SECRET_SOURCE: ${{ github.event.inputs.runtime_secret_source || 'github_secrets' }}
 
     steps:
       - name: Checkout
@@ -106,6 +111,17 @@ jobs:
             echo "Unsupported APP_VARIANT=${APP_VARIANT}" >&2
             exit 1
           fi
+          case "${RUNTIME_SECRET_SOURCE}" in
+            github_secrets)
+              test -n "${LANGSMITH_API_KEY}"
+              ;;
+            secret_manager)
+              ;;
+            *)
+              echo "Unsupported RUNTIME_SECRET_SOURCE=${RUNTIME_SECRET_SOURCE}" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Resolve deploy service
         id: service_meta
@@ -144,11 +160,13 @@ jobs:
           set -euo pipefail
           ENV_FILE="$(mktemp)"
           SERVICE_NAME="${{ steps.service_meta.outputs.service_name }}"
+          SECRET_SOURCE="${RUNTIME_SECRET_SOURCE:-github_secrets}"
           APP_ENTRYPOINT="recommendation_app/go-live/code/application_phase2.py"
           DEPLOY_MEMORY="${CLOUD_RUN_MEMORY:-2Gi}"
           DEPLOY_CONCURRENCY="${CLOUD_RUN_CONCURRENCY:-1}"
           DEPLOY_MIN_INSTANCES="3"
           DEPLOY_MAX_INSTANCES="3"
+          DEPLOY_ARGS=()
           if [ "${SERVICE_NAME}" = "dj-mixing-station-go-live-lighter" ]; then
             DEPLOY_CONCURRENCY="20"
             DEPLOY_MAX_INSTANCES="10"
@@ -165,8 +183,21 @@ jobs:
             echo "GO_LIVE_TRACE_ENVIRONMENT: \"${{ github.event.inputs.deploy_environment }}\""
             echo "LANGSMITH_PROJECT: \"${LANGSMITH_PROJECT}\""
             echo "LANGSMITH_API_URL: \"${LANGSMITH_API_URL}\""
-            echo "LANGSMITH_API_KEY: \"${LANGSMITH_API_KEY}\""
           } > "${ENV_FILE}"
+          case "${SECRET_SOURCE}" in
+            github_secrets)
+              {
+                echo "LANGSMITH_API_KEY: \"${LANGSMITH_API_KEY}\""
+              } >> "${ENV_FILE}"
+              ;;
+            secret_manager)
+              DEPLOY_ARGS+=(--set-secrets "LANGSMITH_API_KEY=LANGSMITH_API_KEY:latest")
+              ;;
+            *)
+              echo "Unsupported RUNTIME_SECRET_SOURCE=${SECRET_SOURCE}" >&2
+              exit 1
+              ;;
+          esac
           gcloud run deploy "${{ steps.service_meta.outputs.service_name }}" \
             --image "${IMAGE_URI}" \
             --region "${GCP_REGION}" \
@@ -180,6 +211,7 @@ jobs:
             --cpu-boost \
             --session-affinity \
             --env-vars-file "${ENV_FILE}" \
+            "${DEPLOY_ARGS[@]}" \
             --labels "app=dj-mixing-station,component=go-live,environment=${{ github.event.inputs.deploy_environment }}"
 
       - name: Capture deploy summary
