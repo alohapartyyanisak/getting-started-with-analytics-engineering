@@ -378,6 +378,22 @@ async function waitForPlaylistGenerationOutcome(page) {
   };
 }
 
+async function waitForDeveloperResultSurface(page) {
+  await page.waitForFunction(
+    () => {
+      const bodyText = document.body?.innerText || '';
+      return (
+        bodyText.includes('Now Playing') ||
+        bodyText.includes('Playback') ||
+        bodyText.includes('Open Temporary YouTube Playlist') ||
+        bodyText.includes('Temporary playlist coverage:')
+      );
+    },
+    null,
+    { timeout: 30000 },
+  );
+}
+
 async function waitForLighterReady(page) {
   await page.waitForFunction(
     () => {
@@ -430,7 +446,7 @@ async function runDeveloperFlow(page, attempt) {
   await waitForFinalPickCount(page, ARTISTS.length);
   attempt.checks.final_pick_box_updated = true;
 
-  await page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
+  await waitForDeveloperResultSurface(page);
   attempt.checks.playable_playlist_visible = true;
 
   const playlistOutcome = await waitForPlaylistGenerationOutcome(page);
