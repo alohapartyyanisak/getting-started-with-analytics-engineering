@@ -107,6 +107,26 @@ async function waitForStartupHealthReady(page, timeoutMs = 60000) {
   throw new Error(`Startup health did not become ready within ${timeoutMs}ms`);
 }
 
+async function waitForDeveloperShellReady(page, timeoutMs = 60000) {
+  await page.waitForFunction(
+    () => {
+      const bodyText = document.body?.innerText || '';
+      const hasMoveSelector = bodyText.includes('Choose your move');
+      const hasSeedInstructions =
+        bodyText.includes('Choose artists') ||
+        bodyText.includes('Choose songs') ||
+        bodyText.includes('Choose songs/artists');
+      const hasModeControls =
+        bodyText.includes('Pick Artists') ||
+        bodyText.includes('Pick Songs') ||
+        bodyText.includes('Self Mix');
+      return hasMoveSelector && (hasSeedInstructions || hasModeControls);
+    },
+    null,
+    { timeout: timeoutMs },
+  );
+}
+
 async function waitForBasePage(page) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (attempt === 0) {
@@ -133,7 +153,7 @@ async function waitForBasePage(page) {
       );
     } else {
       readyChecks.push(
-        page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 35000 }).then(() => true).catch(() => false),
+        waitForDeveloperShellReady(page, 35000).then(() => true).catch(() => false),
       );
     }
 
@@ -158,7 +178,7 @@ async function waitForBasePage(page) {
       { timeout: 60000 },
     );
   } else {
-    await page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await waitForDeveloperShellReady(page, 60000);
   }
 }
 
@@ -190,7 +210,7 @@ async function waitForHydratedInteractiveControls(page) {
     await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
     await sleep(4000);
     await waitForStartupHealthReady(page, 60000);
-    await page.getByText('Now Playing', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
+    await waitForDeveloperShellReady(page, 60000);
     await page.getByText('Choose your move', { exact: false }).waitFor({ state: 'visible', timeout: 60000 });
     await waitForInteractiveControls(page);
     return true;
