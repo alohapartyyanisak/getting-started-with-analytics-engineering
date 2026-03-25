@@ -129,7 +129,11 @@ jobs:
           set -euo pipefail
           SERVICE_NAME="${CLOUD_RUN_SERVICE_OVERRIDE}"
           if [ -z "${SERVICE_NAME}" ]; then
-            SERVICE_NAME="${CLOUD_RUN_SERVICE}"
+            if [ "${APP_VARIANT}" = "lighter" ]; then
+              SERVICE_NAME="dj-mixing-station-go-live-lighter"
+            else
+              SERVICE_NAME="${CLOUD_RUN_SERVICE}"
+            fi
           fi
           echo "service_name=${SERVICE_NAME}" >> "${GITHUB_OUTPUT}"
           echo "service_name=${SERVICE_NAME}"
@@ -228,7 +232,9 @@ jobs:
           CONCURRENCY="$(jq -r '.spec.template.spec.containerConcurrency // ""' "${SERVICE_JSON}")"
           SESSION_AFFINITY="$(jq -r '.spec.template.metadata.annotations["run.googleapis.com/sessionAffinity"] // ""' "${SERVICE_JSON}")"
           PUBLIC_URL="${PUBLIC_BASE_URL_OVERRIDE}"
-          if [ -z "${PUBLIC_URL}" ] && [ "${{ steps.service_meta.outputs.service_name }}" = "${CLOUD_RUN_SERVICE}" ]; then
+          if [ -z "${PUBLIC_URL}" ] && [ "${{ steps.service_meta.outputs.service_name }}" = "dj-mixing-station-go-live-lighter" ]; then
+            PUBLIC_URL="${APP_BASE_URL}"
+          elif [ -z "${PUBLIC_URL}" ] && [ "${{ steps.service_meta.outputs.service_name }}" = "${CLOUD_RUN_SERVICE}" ]; then
             PUBLIC_URL="${APP_BASE_URL}"
           fi
           if [ -z "${PUBLIC_URL}" ]; then
