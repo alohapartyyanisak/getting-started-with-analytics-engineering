@@ -14,7 +14,7 @@ on:
       secret_source:
         description: "How adapter runtime secrets are provided to Cloud Run"
         required: false
-        default: "github_secrets"
+        default: "secret_manager"
 
 concurrency:
   group: go-live-langsmith-adapter-deploy
