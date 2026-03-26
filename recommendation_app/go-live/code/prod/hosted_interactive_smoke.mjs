@@ -339,7 +339,7 @@ async function switchToArtistMode(page) {
 
 async function switchToYouTubePlatform(page) {
   await clickRadioLabel(page, 'YouTube');
-  await page.getByText('Playback', { exact: false }).waitFor({ state: 'visible', timeout: 30000 });
+  await page.locator('label[data-baseweb="radio"]').filter({ hasText: 'Auto' }).first().waitFor({ state: 'visible', timeout: 30000 });
 }
 
 async function waitForFinalPickCount(page, expectedCount) {
