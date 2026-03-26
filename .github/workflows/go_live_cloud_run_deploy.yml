@@ -157,13 +157,16 @@ jobs:
           ENV_FILE="$(mktemp)"
           SERVICE_NAME="${{ steps.service_meta.outputs.service_name }}"
           SECRET_SOURCE="${RUNTIME_SECRET_SOURCE:-github_secrets}"
-          APP_ENTRYPOINT="recommendation_app/go-live/code/application_phase2.py"
+          APP_ENTRYPOINT="recommendation_app/go-live/code/prod/application_phase2.py"
           DEPLOY_MEMORY="${CLOUD_RUN_MEMORY:-2Gi}"
           DEPLOY_CONCURRENCY="${CLOUD_RUN_CONCURRENCY:-1}"
           DEPLOY_MIN_INSTANCES="3"
           DEPLOY_MAX_INSTANCES="3"
           DEPLOY_ARGS=()
           if [ "${SERVICE_NAME}" = "dj-mixing-station-go-live-lighter" ]; then
+            DEPLOY_CONCURRENCY="20"
+            DEPLOY_MAX_INSTANCES="10"
+          elif [ "${SERVICE_NAME}" = "${CLOUD_RUN_SERVICE}" ]; then
             DEPLOY_CONCURRENCY="20"
             DEPLOY_MAX_INSTANCES="10"
           fi
