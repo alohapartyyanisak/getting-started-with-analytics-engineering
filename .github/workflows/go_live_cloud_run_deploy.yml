@@ -213,6 +213,13 @@ jobs:
             "${DEPLOY_ARGS[@]}" \
             --labels "app=dj-mixing-station,component=go-live,environment=${{ github.event.inputs.deploy_environment }}"
 
+      - name: Route latest revision to 100%
+        run: |
+          set -euo pipefail
+          gcloud run services update-traffic "${{ steps.service_meta.outputs.service_name }}" \
+            --region "${GCP_REGION}" \
+            --to-latest
+
       - name: Capture deploy summary
         id: deploy_summary
         env:
