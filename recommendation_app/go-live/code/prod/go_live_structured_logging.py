@@ -198,6 +198,50 @@ def emit_response_sent(
     )
 
 
+def emit_resolver_quality_evaluated(
+    *,
+    request_id: str,
+    session_id: str,
+    dataset_snapshot_id: str,
+    target_rows: int,
+    linked_rows: int,
+    playable_rows: int,
+    unresolved_rows: int,
+    resolver_attempted: int,
+    resolver_resolved: int,
+    included_direct: int,
+    included_resolved: int,
+    budget_blocked_rows: int,
+    degraded: bool,
+    degradation_reason: str,
+) -> None:
+    coverage_ratio = (float(linked_rows) / float(target_rows)) if target_rows > 0 else 0.0
+    unresolved_ratio = (float(unresolved_rows) / float(target_rows)) if target_rows > 0 else 0.0
+    resolver_success_ratio = (
+        float(resolver_resolved) / float(resolver_attempted) if resolver_attempted > 0 else 0.0
+    )
+    emit_event(
+        "resolver_quality_evaluated",
+        request_id=request_id,
+        session_id=session_id,
+        dataset_snapshot_id=dataset_snapshot_id,
+        target_rows=int(target_rows),
+        linked_rows=int(linked_rows),
+        playable_rows=int(playable_rows),
+        unresolved_rows=int(unresolved_rows),
+        resolver_attempted=int(resolver_attempted),
+        resolver_resolved=int(resolver_resolved),
+        included_direct=int(included_direct),
+        included_resolved=int(included_resolved),
+        budget_blocked_rows=int(budget_blocked_rows),
+        coverage_ratio=round(coverage_ratio, 4),
+        unresolved_ratio=round(unresolved_ratio, 4),
+        resolver_success_ratio=round(resolver_success_ratio, 4),
+        degraded=bool(degraded),
+        degradation_reason=degradation_reason,
+    )
+
+
 def emit_error(
     *,
     request_id: str,

@@ -1,0 +1,44 @@
+displayName: Go-Live Public Lane Resolver Degradation High
+documentation:
+  content: |
+    Public lighter lane resolver/link quality is degrading beyond the expected baseline.
+
+    Scope:
+    - URL: studio.djmixingstation.com
+    - Service: dj-mixing-station-go-live-lighter
+
+    Alert definition:
+    - resolver degradation count > 5 events in a 60 minute window
+    - counts structured `resolver_quality_evaluated` events where `degraded=true`
+
+    Degradation reasons included:
+    - unresolved_ratio_high
+    - playlist_coverage_low
+    - resolver_budget_blocked
+    - resolver_success_low
+
+    First checks:
+    1. Open the `Go-Live Public Lane Health` dashboard.
+    2. Inspect recent `resolver_quality_evaluated` events in Cloud Logging.
+    3. Compare active `dataset_snapshot_id`, `app_release_version`, and `resolver_version`.
+    4. Check whether the signal is tied to one release, one dataset snapshot, or quota/budget pressure.
+    5. If needed, follow the rollback order from `recommendation_app/go-live/plan/10_rollback_runbook.md`.
+  mimeType: text/markdown
+combiner: OR
+enabled: true
+conditions:
+  - displayName: Public lane resolver degradation count > 5 for 60m
+    conditionThreshold:
+      filter: metric.type="logging.googleapis.com/user/go_live_resolver_degradation_count" AND resource.type="cloud_run_revision" AND resource.labels.service_name="dj-mixing-station-go-live-lighter"
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_SUM
+      comparison: COMPARISON_GT
+      thresholdValue: 5
+      duration: 3600s
+      trigger:
+        count: 1
+userLabels:
+  component: go_live
+  lane: public
+  alert_type: resolver_degradation

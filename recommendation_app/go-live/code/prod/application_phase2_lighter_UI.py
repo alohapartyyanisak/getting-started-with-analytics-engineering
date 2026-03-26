@@ -21,11 +21,39 @@ from prod.go_live_structured_logging import (
     emit_playlist_optimized,
     emit_ranking_completed,
     emit_request_received,
+    emit_resolver_quality_evaluated,
     emit_response_sent,
     emit_seed_resolution_completed,
 )
 
 PUBLIC_UI_CACHE_VERSION = "studio_dev_playlist_v1"
+RESOLVER_UNRESOLVED_RATIO_WARN = 0.20
+RESOLVER_COVERAGE_RATIO_WARN = 0.80
+
+
+def _resolver_degradation_reason(yt_stats: dict[str, Any], *, target_rows: int, linked_rows: int) -> str:
+    if target_rows <= 0:
+        return "no_target_rows"
+    unresolved_rows = int(yt_stats.get("unresolved_rows", 0) or 0)
+    resolver_attempted = int(yt_stats.get("resolver_attempted", 0) or 0)
+    resolver_resolved = int(yt_stats.get("resolver_resolved", 0) or 0)
+    budget_blocked_rows = int(yt_stats.get("budget_blocked_rows", 0) or 0)
+
+    coverage_ratio = float(linked_rows) / float(target_rows)
+    unresolved_ratio = float(unresolved_rows) / float(target_rows)
+    resolver_success_ratio = (
+        float(resolver_resolved) / float(resolver_attempted) if resolver_attempted > 0 else 1.0
+    )
+
+    if budget_blocked_rows > 0:
+        return "resolver_budget_blocked"
+    if unresolved_ratio > RESOLVER_UNRESOLVED_RATIO_WARN:
+        return "unresolved_ratio_high"
+    if coverage_ratio < RESOLVER_COVERAGE_RATIO_WARN:
+        return "playlist_coverage_low"
+    if resolver_attempted >= 5 and resolver_success_ratio < 0.20:
+        return "resolver_success_low"
+    return "healthy"
 
 
 def _render_hidden_startup_health(status: str) -> None:
@@ -458,6 +486,35 @@ def main() -> None:
     duplicate_collapsed = max(0, linked_rows - playable_rows)
     sidebar_temp_playlist_payload = temp_playlist_payload
     sidebar_temp_playlist_duplicate_collapsed = duplicate_collapsed
+    unresolved_rows = int(yt_stats.get("unresolved_rows", 0) or 0)
+    resolver_attempted = int(yt_stats.get("resolver_attempted", 0) or 0)
+    resolver_resolved = int(yt_stats.get("resolver_resolved", 0) or 0)
+    included_direct = int(yt_stats.get("included_direct", 0) or 0)
+    included_resolved = int(yt_stats.get("included_resolved", 0) or 0)
+    budget_blocked_rows = int(yt_stats.get("budget_blocked_rows", 0) or 0)
+    resolver_degradation_reason = _resolver_degradation_reason(
+        yt_stats,
+        target_rows=target_rows,
+        linked_rows=linked_rows,
+    )
+    resolver_degraded = resolver_degradation_reason != "healthy"
+    if should_emit_request_logs:
+        emit_resolver_quality_evaluated(
+            request_id=request_id,
+            session_id=session_id,
+            dataset_snapshot_id=dataset_snapshot_id,
+            target_rows=target_rows,
+            linked_rows=linked_rows,
+            playable_rows=playable_rows,
+            unresolved_rows=unresolved_rows,
+            resolver_attempted=resolver_attempted,
+            resolver_resolved=resolver_resolved,
+            included_direct=included_direct,
+            included_resolved=included_resolved,
+            budget_blocked_rows=budget_blocked_rows,
+            degraded=resolver_degraded,
+            degradation_reason=resolver_degradation_reason,
+        )
 
     player_col, mode_col = base_app.st.columns([3, 2])
     with player_col:
