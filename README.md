@@ -60,6 +60,11 @@ con
 ## Why it matters
 This project reflects how I think about recommendation systems as a product scientist: ranking quality, transparent controls, user behavior, measurable outcomes, and iterative shipping.
 
+## Case Study
+A deeper look into product decisions, tradeoffs, and evaluation thinking:
+
+- [Read the Case Study](docs/CASE_STUDY.md)
+
 ## Quick Links
 - [Case Study (PDF)](docs/DJ_Mixing_Station_Studio_Case_Study.pdf)
 - [Medium Tech Post](https://medium.com/@yanisakk26/your-taste-your-vibe-how-dj-mixing-station-studio-reimagines-recommendations-tech-8f0472d93b4d)
