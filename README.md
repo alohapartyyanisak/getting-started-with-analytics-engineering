@@ -65,6 +65,9 @@ A deeper look into product decisions, tradeoffs, and evaluation thinking:
 
 - [Read the Case Study](docs/CASE_STUDY.md)
 
+## Writing
+- Reflection on recommendation systems: [Read on Medium](https://medium.com/@yanisakk26/what-makes-a-recommendation-feel-right-61d65fb909e2)
+
 ## Quick Links
 - [Case Study (PDF)](docs/DJ_Mixing_Station_Studio_Case_Study.pdf)
 - [Medium Tech Post](https://medium.com/@yanisakk26/your-taste-your-vibe-how-dj-mixing-station-studio-reimagines-recommendations-tech-8f0472d93b4d)
