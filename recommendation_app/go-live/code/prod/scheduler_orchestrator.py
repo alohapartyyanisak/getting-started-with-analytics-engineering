@@ -12,17 +12,20 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+import pandas as pd
+
 CODE_ROOT = Path(__file__).resolve().parent.parent
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
 import phase2_runtime_config as cfg
 from phase2_managed_loader import load_prepared_dataset, pointer_path
-from phase2_weekly_validation_summary import build_validation_summary
+from phase2_weekly_validation_summary import build_validation_rows, build_validation_summary
 
 import phase2_incremental_publish
 import phase2_publish_dataset
 import phase2_revalidate_problem_queue
+import phase2_unresolved_problem_queue
 
 
 PUBLISH_MODES = ("incremental", "full", "problem_queue", "problem_queue_bounded")
@@ -48,6 +51,11 @@ def _read_json(path: Path) -> dict[str, Any]:
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _write_parquet(path: Path, frame: pd.DataFrame) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_parquet(path, index=False)
 
 
 def _current_pointer_payload(dataset_root: Path) -> dict[str, Any]:
@@ -416,6 +424,48 @@ def orchestrate_scheduler(
             )
         )
 
+        stage = _start_stage("validation_rows")
+        validation_rows = build_validation_rows(
+            candidate_version=candidate_version,
+            base_version=base_version,
+            execution_mode=mode,
+            validation_run_id=run_id,
+        )
+        validation_rows_path = dataset_root / "snapshots" / candidate_version / "validation_rows.parquet"
+        _write_parquet(validation_rows_path, validation_rows)
+        stages.append(
+            _end_stage(
+                stage,
+                "ok",
+                details={
+                    "validation_rows_path": str(validation_rows_path.resolve()),
+                    "row_count": int(len(validation_rows)),
+                },
+            )
+        )
+
+        stage = _start_stage("unresolved_queue")
+        unresolved_queue_result = phase2_unresolved_problem_queue.update_unresolved_problem_queue(
+            validation_rows=validation_rows,
+            dataset_root=dataset_root,
+            run_id=run_id,
+            candidate_dataset_version=candidate_version,
+            base_dataset_version=base_version,
+        )
+        stages.append(
+            _end_stage(
+                stage,
+                "ok",
+                details={
+                    "current_queue_path": unresolved_queue_result["current_queue_path"],
+                    "current_summary_path": unresolved_queue_result["current_summary_path"],
+                    "history_queue_path": unresolved_queue_result["history_queue_path"],
+                    "history_summary_path": unresolved_queue_result["history_summary_path"],
+                    "row_count": int(unresolved_queue_result["row_count"]),
+                },
+            )
+        )
+
         promoted = bool(auto_promote and validation_summary.get("publish_recommended") is True)
         if not promoted:
             stage = _start_stage("pointer_restore")
@@ -445,6 +495,12 @@ def orchestrate_scheduler(
             "candidate_dataset_version": candidate_version,
             "candidate_health": candidate_health,
             "validation_summary_path": str(validation_summary_path.resolve()),
+            "validation_rows_path": str(validation_rows_path.resolve()),
+            "unresolved_queue_current_path": unresolved_queue_result["current_queue_path"],
+            "unresolved_queue_summary_path": unresolved_queue_result["current_summary_path"],
+            "unresolved_queue_history_path": unresolved_queue_result["history_queue_path"],
+            "unresolved_queue_history_summary_path": unresolved_queue_result["history_summary_path"],
+            "unresolved_queue_summary": unresolved_queue_result["summary"],
             "validation_summary": validation_summary,
             "promoted": promoted,
             "pointer_restored": pointer_restored,

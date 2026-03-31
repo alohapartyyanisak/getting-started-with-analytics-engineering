@@ -43,6 +43,11 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _clean_text(value: object) -> str:
+    text = str(value or "").strip()
+    return "" if text.lower() == "nan" else text
+
+
 def _snapshot_dir(version: str, dataset_root: Path) -> Path:
     return dataset_root / "snapshots" / version
 
@@ -160,6 +165,242 @@ def _triage_report(report_type: str, report_df: pd.DataFrame | None) -> tuple[in
         return auto_pass, manual_review, auto_reject
 
     return 0, 0, 0
+
+
+def _infer_version_tag(track: object) -> str:
+    text = str(track or "").strip().lower()
+    if not text:
+        return "default"
+    tags: list[str] = []
+    if "live" in text:
+        tags.append("live")
+    if "acoustic" in text:
+        tags.append("acoustic")
+    if "remix" in text:
+        tags.append("remix")
+    if not tags:
+        return "default"
+    return "+".join(sorted(set(tags)))
+
+
+def _report_row_status(report_type: str, row: pd.Series) -> str:
+    if report_type == "problem_queue_revalidation":
+        return str(row.get("status_after", "") or "").strip()
+    return str(row.get("status", "") or "").strip()
+
+
+def _report_row_problem_type(status: str, reason: object) -> str | None:
+    text = str(status or "").strip().lower()
+    reason_text = str(reason or "").strip().lower()
+    if not text and not reason_text:
+        return None
+    if "duplicate" in text or "duplicate" in reason_text:
+        return "duplicate_conflict"
+    if "budget" in text or "quota" in text or "budget" in reason_text or "quota" in reason_text:
+        return "resolver_budget_blocked"
+    if "missing" in text:
+        return "missing_youtube_link"
+    if "low_confidence" in text or "low confidence" in reason_text:
+        return "low_confidence_resolve"
+    if "manual_override" in text:
+        return None
+    if "unplayable" in text:
+        return "unplayable_youtube_link"
+    if "unresolved" in text:
+        return "missing_youtube_link"
+    return "validation_mismatch"
+
+
+def _report_row_validation_outcome(report_type: str, row: pd.Series) -> str:
+    status = _report_row_status(report_type, row)
+    reason = row.get("resolver_reason", "")
+    if report_type == "revalidation":
+        if status in {"kept_direct_playable", "no_direct_id", "unplayable_resolved_same_id"}:
+            return "auto_pass"
+        if status == "unplayable_replaced_by_resolver":
+            return "auto_pass" if _is_trusted_reason(reason) else "manual_review"
+        return "auto_reject"
+
+    if report_type == "problem_queue_revalidation":
+        if status in {"direct_now_playable", "manual_override_applied"}:
+            return "auto_pass"
+        if status == "replaced_by_tightened_resolver":
+            return "auto_pass" if _is_trusted_reason(reason) else "manual_review"
+        if status in {"still_unresolved", "missing_from_snapshot"}:
+            return "auto_reject"
+        return "manual_review"
+
+    return "auto_reject"
+
+
+def _report_row_behavioral_outcome(validation_outcome: str) -> str:
+    if validation_outcome == "auto_pass":
+        return "pass"
+    if validation_outcome == "manual_review":
+        return "manual_review"
+    return "fail"
+
+
+def _candidate_watch_url(report_type: str, row: pd.Series) -> str:
+    new_watch = _clean_text(row.get("new_watch_url", ""))
+    old_watch = _clean_text(row.get("old_watch_url", ""))
+    if new_watch:
+        return new_watch
+    if report_type == "revalidation" and str(row.get("status", "") or "").strip() in {
+        "kept_direct_playable",
+        "no_direct_id",
+        "unplayable_resolved_same_id",
+    }:
+        return old_watch
+    if report_type == "problem_queue_revalidation" and str(row.get("status_after", "") or "").strip() in {
+        "direct_now_playable",
+    }:
+        return old_watch
+    return old_watch if old_watch and not new_watch else ""
+
+
+def _source_type_from_watch(watch_url: str, *, status: str, reason: object, unresolved_fallback: bool = True) -> str:
+    text = str(status or "").strip().lower()
+    reason_text = str(reason or "").strip().lower()
+    watch = _clean_text(watch_url)
+    if not watch:
+        return "unresolved" if unresolved_fallback else ""
+    if "resolver" in text or "manual_override" in text or _is_trusted_reason(reason_text):
+        return "resolved"
+    return "direct"
+
+
+def _row_confidence_band(validation_outcome: str, reason: object) -> str:
+    if validation_outcome == "auto_pass":
+        return "high" if _is_trusted_reason(reason) else "medium"
+    if validation_outcome == "manual_review":
+        return "medium"
+    return "unknown"
+
+
+def _row_error_code(problem_type: str | None, *, unresolved_flag: bool, playability_mismatch_flag: bool) -> str:
+    if problem_type == "duplicate_conflict":
+        return "DUPLICATE_LINK_CONFLICT"
+    if problem_type == "resolver_budget_blocked":
+        return "RESOLVER_BUDGET_BLOCKED"
+    if problem_type == "low_confidence_resolve":
+        return "LOW_CONFIDENCE_RESOLVE"
+    if playability_mismatch_flag:
+        return "UNPLAYABLE_YOUTUBE_LINK"
+    if unresolved_flag or problem_type == "missing_youtube_link":
+        return "UNRESOLVED_YOUTUBE_LINK"
+    if problem_type == "validation_mismatch":
+        return "VALIDATION_MISMATCH"
+    return ""
+
+
+def _report_rows_to_validation_rows(
+    *,
+    report_type: str,
+    report_df: pd.DataFrame | None,
+    candidate_version: str,
+    base_version: str,
+    validation_run_id: str,
+    validated_at_utc: str,
+    execution_mode: str,
+) -> pd.DataFrame:
+    columns = [
+        "artist",
+        "track",
+        "yt_key",
+        "canonical_key",
+        "version_tag",
+        "dataset_snapshot_id",
+        "candidate_dataset_version",
+        "base_dataset_version",
+        "current_watch_url",
+        "current_video_id",
+        "current_source_type",
+        "validation_outcome",
+        "problem_type",
+        "problem_reason",
+        "behavioral_outcome",
+        "row_confidence_band",
+        "golden_song_flag",
+        "duplicate_conflict_flag",
+        "unresolved_flag",
+        "playability_mismatch_flag",
+        "manual_review_required",
+        "candidate_watch_url",
+        "candidate_video_id",
+        "candidate_source_type",
+        "replacement_changed_flag",
+        "replacement_valid_flag",
+        "validation_stage",
+        "error_code",
+        "notes",
+        "validation_run_id",
+        "validated_at_utc",
+        "execution_mode",
+    ]
+    if report_df is None or report_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    rows: list[dict[str, Any]] = []
+    for _, row in report_df.iterrows():
+        status = _report_row_status(report_type, row)
+        reason = row.get("resolver_reason", "")
+        validation_outcome = _report_row_validation_outcome(report_type, row)
+        behavioral_outcome = _report_row_behavioral_outcome(validation_outcome)
+        old_watch = _clean_text(row.get("old_watch_url", ""))
+        new_watch = str(_candidate_watch_url(report_type, row) or "").strip()
+        old_video = _extract_video_id(old_watch, row.get("old_video_id", ""))
+        new_video = _extract_video_id(new_watch, row.get("new_video_id", ""))
+        replacement_changed = bool(new_watch and new_watch != old_watch)
+        problem_type = _report_row_problem_type(status, reason)
+        duplicate_conflict_flag = bool(problem_type == "duplicate_conflict")
+        unresolved_flag = bool(not new_watch or status in {"still_unresolved", "missing_from_snapshot"})
+        playability_mismatch_flag = "unplayable" in str(status or "").strip().lower()
+        manual_review_required = bool(validation_outcome == "manual_review")
+        candidate_source_type = _source_type_from_watch(new_watch, status=status, reason=reason)
+        current_source_type = _source_type_from_watch(old_watch, status=status, reason=reason)
+        rows.append(
+            {
+                "artist": str(row.get("artist", "") or "").strip(),
+                "track": str(row.get("track", "") or "").strip(),
+                "yt_key": str(row.get("canonical_key", "") or "").strip(),
+                "canonical_key": str(row.get("canonical_key", "") or "").strip(),
+                "version_tag": _infer_version_tag(row.get("track", "")),
+                "dataset_snapshot_id": candidate_version,
+                "candidate_dataset_version": candidate_version,
+                "base_dataset_version": base_version,
+                "current_watch_url": old_watch,
+                "current_video_id": old_video,
+                "current_source_type": current_source_type,
+                "validation_outcome": validation_outcome,
+                "problem_type": problem_type,
+                "problem_reason": str(reason or "").strip() or None,
+                "behavioral_outcome": behavioral_outcome,
+                "row_confidence_band": _row_confidence_band(validation_outcome, reason),
+                "golden_song_flag": False,
+                "duplicate_conflict_flag": duplicate_conflict_flag,
+                "unresolved_flag": unresolved_flag,
+                "playability_mismatch_flag": playability_mismatch_flag,
+                "manual_review_required": manual_review_required,
+                "candidate_watch_url": new_watch,
+                "candidate_video_id": new_video,
+                "candidate_source_type": candidate_source_type,
+                "replacement_changed_flag": replacement_changed,
+                "replacement_valid_flag": bool(validation_outcome == "auto_pass" and bool(new_watch)),
+                "validation_stage": "quality",
+                "error_code": _row_error_code(
+                    problem_type,
+                    unresolved_flag=unresolved_flag,
+                    playability_mismatch_flag=playability_mismatch_flag,
+                ),
+                "notes": "",
+                "validation_run_id": validation_run_id,
+                "validated_at_utc": validated_at_utc,
+                "execution_mode": execution_mode,
+            }
+        )
+
+    return pd.DataFrame(rows, columns=columns)
 
 
 def _validate_contract(metadata: dict[str, Any], snapshot_dir: Path, df: pd.DataFrame) -> tuple[bool, list[str]]:
@@ -398,6 +639,43 @@ def build_validation_summary(
         "publish_recommended": publish_recommended,
     }
     return summary
+
+
+def build_validation_rows(
+    candidate_version: str,
+    base_version: str | None = None,
+    execution_mode: str = "unknown",
+    validation_run_id: str = "",
+) -> pd.DataFrame:
+    dataset_root = cfg.dataset_root()
+    candidate_release = resolve_release(version=candidate_version, dataset_root=dataset_root)
+    candidate_snapshot_dir = _snapshot_dir(candidate_release.version, dataset_root)
+    candidate_meta = _read_json(candidate_release.metadata_path)
+
+    resolved_base_version = base_version
+    if not resolved_base_version:
+        source = candidate_meta.get("source") or {}
+        resolved_base_version = str(source.get("parent_dataset_version", "")).strip() or None
+    if not resolved_base_version:
+        raise ValueError("base_version is required when parent_dataset_version is not available in candidate metadata")
+
+    base_release = resolve_release(version=resolved_base_version, dataset_root=dataset_root)
+    report_type, report_df, _report_path = _load_report(candidate_snapshot_dir, candidate_meta)
+    if not validation_run_id:
+        validation_run_id = f"validation_{candidate_release.version}"
+    validated_at_utc = str(candidate_meta.get("created_at_utc", "") or "").strip()
+    if not validated_at_utc:
+        validated_at_utc = "unknown"
+
+    return _report_rows_to_validation_rows(
+        report_type=report_type,
+        report_df=report_df,
+        candidate_version=candidate_release.version,
+        base_version=base_release.version,
+        validation_run_id=validation_run_id,
+        validated_at_utc=validated_at_utc,
+        execution_mode=str(execution_mode or "unknown").strip() or "unknown",
+    )
 
 
 def main() -> None:
