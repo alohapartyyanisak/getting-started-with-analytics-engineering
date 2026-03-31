@@ -15,7 +15,7 @@ The project focuses on building a playlist generation experience that is:
 - responsive to user input
 - usable in real listening situations
 
-Instead of treating recommendation as a pure ranking problem, this project approaches it as a product problem shaped by user intent, control, and tradeoffs.
+Instead of treating recommendations as a pure ranking problem, this project approaches it as a product problem shaped by user intent, control, and tradeoffs.
 
 ---
 
