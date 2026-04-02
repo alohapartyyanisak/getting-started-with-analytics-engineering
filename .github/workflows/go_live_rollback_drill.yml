@@ -125,7 +125,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          gcloud storage rsync --recursive --delete-unmatched-destination-objects \
+          gcloud storage rsync --recursive \
             "${GO_LIVE_DATASET_STORAGE_ROOT}" "${GCS_DATASET_URI}"
 
       - name: Upload workflow artifacts
