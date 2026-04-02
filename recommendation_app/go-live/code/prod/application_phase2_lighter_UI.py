@@ -318,10 +318,21 @@ def _handle_pending_tracked_open(
     base_app.components.html(
         (
             "<script>"
-            f"window.location.replace('{safe_target}');"
+            f"(function(){{"
+            f"var target='{safe_target}';"
+            f"try {{ window.top.location.replace(target); return; }} catch (e) {{}}"
+            f"try {{ window.parent.location.replace(target); return; }} catch (e) {{}}"
+            f"window.location.replace(target);"
+            f"}})();"
             "</script>"
+            f'<meta http-equiv="refresh" content="0; url={safe_target}">'
+            f'<div style="font-family: system-ui, sans-serif; color: #f5f5f5; background: #070707; padding: 12px;">'
+            f'Opening destination... '
+            f'<a href="{safe_target}" target="_top" rel="noopener noreferrer" '
+            f'style="color: #d4af37;">Continue</a>'
+            f"</div>"
         ),
-        height=0,
+        height=48,
     )
     base_app.st.caption("Opening destination...")
     base_app.st.stop()
