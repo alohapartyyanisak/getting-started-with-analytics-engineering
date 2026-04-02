@@ -1075,21 +1075,12 @@ def main() -> None:
                 sidebar_yt_stats.get("playable_linked_rows", sidebar_playable_rows) or sidebar_playable_rows
             )
             if playlist_url:
-                coverage_ratio = (sidebar_linked_rows / sidebar_target_rows) if sidebar_target_rows > 0 else 0.0
-                temp_playlist_tracked_url = _tracked_outbound_url(
-                    target_url=playlist_url,
-                    open_event="temp_playlist_opened",
-                    traffic_source=traffic_source,
-                    anonymous_browser_id=anonymous_browser_id,
-                    session_id=session_id,
-                    request_id=request_id,
-                    playlist_track_count=sidebar_playable_rows,
-                    coverage_ratio=coverage_ratio,
-                )
-                _render_tracked_platform_link(
-                    "Open Temporary YouTube Playlist",
-                    playlist_url,
-                    tracked_url=temp_playlist_tracked_url,
+                base_app.st.markdown(
+                    (
+                        f'<a class="platform-link" href="{escape(playlist_url, quote=True)}" target="_blank" '
+                        'rel="noopener noreferrer">Open Temporary YouTube Playlist</a>'
+                    ),
+                    unsafe_allow_html=True,
                 )
             else:
                 base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
