@@ -39,6 +39,11 @@ def main() -> int:
         "--server.headless=true",
         "--browser.gatherUsageStats=false",
         "--server.fileWatcherType=none",
+        "--theme.base=dark",
+        "--theme.primaryColor=#d4af37",
+        "--theme.backgroundColor=#070707",
+        "--theme.secondaryBackgroundColor=#111111",
+        "--theme.textColor=#f5f5f5",
     ]
     return subprocess.call(cmd)
 
