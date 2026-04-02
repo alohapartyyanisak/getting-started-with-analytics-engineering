@@ -4,9 +4,10 @@ import hashlib
 import sys
 import time
 import uuid
+from html import escape
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import pandas as pd
 
@@ -156,6 +157,175 @@ def _product_traffic_source() -> str:
 
     base_app.st.session_state[state_key] = traffic_source
     return traffic_source
+
+
+def _pending_tracked_open() -> dict[str, str] | None:
+    keys = [
+        "open_event",
+        "target_url",
+        "platform",
+        "track_name",
+        "artist_name",
+        "playlist_position",
+        "playlist_track_count",
+        "coverage_ratio",
+        "analytics_nonce",
+        "analytics_browser_id",
+        "analytics_session_id",
+        "analytics_request_id",
+        "traffic_source",
+    ]
+    values: dict[str, str] = {}
+    for key in keys:
+        candidates = _query_param_values(key)
+        if candidates:
+            values[key] = candidates[-1]
+    if not values.get("open_event") or not values.get("target_url"):
+        return None
+    return values
+
+
+def _tracked_outbound_url(
+    *,
+    target_url: str,
+    open_event: str,
+    traffic_source: str,
+    anonymous_browser_id: str,
+    session_id: str,
+    request_id: str,
+    platform: str = "",
+    track_name: str = "",
+    artist_name: str = "",
+    playlist_position: int | None = None,
+    playlist_track_count: int | None = None,
+    coverage_ratio: float | None = None,
+) -> str:
+    params: dict[str, str] = {
+        "open_event": open_event,
+        "target_url": target_url,
+        "analytics_nonce": str(uuid.uuid4()),
+        "analytics_browser_id": anonymous_browser_id,
+        "analytics_session_id": session_id,
+        "analytics_request_id": request_id or "unknown_request",
+        "traffic_source": traffic_source,
+    }
+    if traffic_source == "internal_test":
+        params["internal_test"] = "1"
+    if platform:
+        params["platform"] = platform
+    if track_name:
+        params["track_name"] = track_name
+    if artist_name:
+        params["artist_name"] = artist_name
+    if playlist_position is not None:
+        params["playlist_position"] = str(int(playlist_position))
+    if playlist_track_count is not None:
+        params["playlist_track_count"] = str(int(playlist_track_count))
+    if coverage_ratio is not None:
+        params["coverage_ratio"] = f"{float(coverage_ratio):.4f}"
+    return "?" + urlencode(params)
+
+
+def _render_tracked_platform_link(
+    label: str,
+    target_url: str,
+    *,
+    tracked_url: str,
+) -> None:
+    safe_label = escape(str(label or "").strip())
+    safe_href = escape(str(tracked_url or "").strip(), quote=True)
+    base_app.st.markdown(
+        (
+            f'<a class="platform-link" href="{safe_href}" target="_blank" '
+            f'rel="noopener noreferrer">{safe_label}</a>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _handle_pending_tracked_open(
+    *,
+    default_browser_id: str,
+    default_session_id: str,
+    default_request_id: str,
+    dataset_snapshot_id: str,
+    default_traffic_source: str,
+) -> bool:
+    payload = _pending_tracked_open()
+    if not payload:
+        return False
+
+    nonce = str(payload.get("analytics_nonce", "") or "").strip()
+    handled_nonces = base_app.st.session_state.get("public_handled_open_nonces")
+    if not isinstance(handled_nonces, set):
+        handled_nonces = set()
+        base_app.st.session_state["public_handled_open_nonces"] = handled_nonces
+    if nonce and nonce in handled_nonces:
+        return False
+
+    browser_id = str(payload.get("analytics_browser_id", "") or "").strip() or default_browser_id
+    session_id = str(payload.get("analytics_session_id", "") or "").strip() or default_session_id
+    request_id = str(payload.get("analytics_request_id", "") or "").strip() or default_request_id or "unknown_request"
+    traffic_source = str(payload.get("traffic_source", "") or "").strip() or default_traffic_source
+    open_event = str(payload.get("open_event", "") or "").strip()
+    target_url = str(payload.get("target_url", "") or "").strip()
+    platform = str(payload.get("platform", "") or "").strip()
+    track_name = str(payload.get("track_name", "") or "").strip()
+    artist_name = str(payload.get("artist_name", "") or "").strip()
+    playlist_position = str(payload.get("playlist_position", "") or "").strip()
+    playlist_track_count = str(payload.get("playlist_track_count", "") or "").strip()
+    coverage_ratio = str(payload.get("coverage_ratio", "") or "").strip()
+
+    if open_event in {"spotify_opened", "youtube_opened"}:
+        emit_product_event(
+            "track_play_clicked",
+            anonymous_browser_id=browser_id,
+            session_id=session_id,
+            request_id=request_id,
+            dataset_snapshot_id=dataset_snapshot_id,
+            traffic_source=traffic_source,
+            track_name=track_name,
+            artist_name=artist_name,
+            platform=platform or ("spotify" if open_event == "spotify_opened" else "youtube"),
+            playlist_position=int(playlist_position or 0),
+        )
+        emit_product_event(
+            open_event,
+            anonymous_browser_id=browser_id,
+            session_id=session_id,
+            request_id=request_id,
+            dataset_snapshot_id=dataset_snapshot_id,
+            traffic_source=traffic_source,
+            track_name=track_name,
+            playlist_position=int(playlist_position or 0),
+        )
+    elif open_event == "temp_playlist_opened":
+        emit_product_event(
+            "temp_playlist_opened",
+            anonymous_browser_id=browser_id,
+            session_id=session_id,
+            request_id=request_id,
+            dataset_snapshot_id=dataset_snapshot_id,
+            traffic_source=traffic_source,
+            playlist_track_count=int(playlist_track_count or 0),
+            coverage_ratio=float(coverage_ratio or 0.0),
+        )
+
+    if nonce:
+        handled_nonces.add(nonce)
+
+    safe_target = escape(target_url, quote=True)
+    base_app.components.html(
+        (
+            "<script>"
+            f"window.location.replace('{safe_target}');"
+            "</script>"
+        ),
+        height=0,
+    )
+    base_app.st.caption("Opening destination...")
+    base_app.st.stop()
+    return True
 
 
 def _emit_product_event_once(
@@ -426,6 +596,13 @@ def main() -> None:
     anonymous_browser_id = _anonymous_browser_id()
     session_id = _session_id()
     traffic_source = _product_traffic_source()
+    _handle_pending_tracked_open(
+        default_browser_id=anonymous_browser_id,
+        default_session_id=session_id,
+        default_request_id=str(base_app.st.session_state.get("public_request_id", "") or "").strip(),
+        dataset_snapshot_id=dataset_snapshot_id,
+        default_traffic_source=traffic_source,
+    )
     _ensure_public_cache_version()
     request_id = str(base_app.st.session_state.get("public_request_id", "") or "").strip()
 
@@ -814,7 +991,34 @@ def main() -> None:
         f'**{selected_row["artist"]} - {selected_row["track"]}** · {selected_row["duration_text"]} '
         f'· Momentum {selected_row["momentum_score"]:.3f}'
     )
-    base_app.render_track_links(selected_spotify, selected_youtube)
+    if selected_spotify:
+        spotify_tracked_url = _tracked_outbound_url(
+            target_url=selected_spotify,
+            open_event="spotify_opened",
+            traffic_source=traffic_source,
+            anonymous_browser_id=anonymous_browser_id,
+            session_id=session_id,
+            request_id=request_id,
+            platform="spotify",
+            track_name=str(selected_row["track"]),
+            artist_name=str(selected_row["artist"]),
+            playlist_position=int(selected_row["position"]),
+        )
+        _render_tracked_platform_link("Spotify", selected_spotify, tracked_url=spotify_tracked_url)
+    if selected_youtube:
+        youtube_tracked_url = _tracked_outbound_url(
+            target_url=selected_youtube,
+            open_event="youtube_opened",
+            traffic_source=traffic_source,
+            anonymous_browser_id=anonymous_browser_id,
+            session_id=session_id,
+            request_id=request_id,
+            platform="youtube",
+            track_name=str(selected_row["track"]),
+            artist_name=str(selected_row["artist"]),
+            playlist_position=int(selected_row["position"]),
+        )
+        _render_tracked_platform_link("YouTube", selected_youtube, tracked_url=youtube_tracked_url)
 
     if playback_platform == "YouTube":
         if selected_youtube_watch:
@@ -854,16 +1058,30 @@ def main() -> None:
                 if isinstance(sidebar_temp_playlist_payload.get("yt_stats"), dict)
                 else {}
             )
-            if playlist_url:
-                base_app.render_platform_link("Open Temporary YouTube Playlist", playlist_url)
-            else:
-                base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
-
             sidebar_target_rows = int(sidebar_yt_stats.get("target_rows", 0) or 0)
             sidebar_playable_rows = int(sidebar_yt_stats.get("playable_count", 0) or 0)
             sidebar_linked_rows = int(
                 sidebar_yt_stats.get("playable_linked_rows", sidebar_playable_rows) or sidebar_playable_rows
             )
+            if playlist_url:
+                coverage_ratio = (sidebar_linked_rows / sidebar_target_rows) if sidebar_target_rows > 0 else 0.0
+                temp_playlist_tracked_url = _tracked_outbound_url(
+                    target_url=playlist_url,
+                    open_event="temp_playlist_opened",
+                    traffic_source=traffic_source,
+                    anonymous_browser_id=anonymous_browser_id,
+                    session_id=session_id,
+                    request_id=request_id,
+                    playlist_track_count=sidebar_playable_rows,
+                    coverage_ratio=coverage_ratio,
+                )
+                _render_tracked_platform_link(
+                    "Open Temporary YouTube Playlist",
+                    playlist_url,
+                    tracked_url=temp_playlist_tracked_url,
+                )
+            else:
+                base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
             if sidebar_target_rows > 0:
                 coverage_pct = (sidebar_linked_rows / sidebar_target_rows) * 100.0
                 base_app.st.caption(
