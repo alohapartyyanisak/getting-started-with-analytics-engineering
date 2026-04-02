@@ -850,12 +850,45 @@ def _should_try_live_youtube_override(row: pd.Series, direct_watch: str | None) 
 
     title_text = str(row.get("title", "") or "").lower()
     channel_text = str(row.get("channel", "") or "").lower()
+    title_signal = any(
+        token in title_text
+        for token in (
+            "[mv]",
+            " m/v",
+            " mv",
+            "music video",
+            "official video",
+            "official audio",
+            "performance video",
+            "visualizer",
+        )
+    )
     official_signal = (
         _as_bool(row.get("yt_title_official_mv"))
         or _as_bool(row.get("yt_title_official_audio"))
         or ("official" in title_text)
     )
     channel_match = _as_float(row.get("yt_channel_artist_match"), 0.0) > 0
+    trusted_channel = any(
+        token in channel_text
+        for token in (
+            "vevo",
+            "1thek",
+            "jyp entertainment",
+            "smtown",
+            "hybe labels",
+            "starshiptv",
+            "stone music entertainment",
+            "yg entertainment",
+            "genie music",
+            "kq entertainment",
+            "rbw",
+            "cube entertainment",
+            "pledis entertainment",
+            "big hit labels",
+            "ygex",
+        )
+    ) or channel_text.endswith(" - topic")
     suspicious_channel = any(
         token in channel_text
         for token in (
@@ -871,7 +904,8 @@ def _should_try_live_youtube_override(row: pd.Series, direct_watch: str | None) 
             "edit",
         )
     )
-    return (not official_signal and not channel_match) or suspicious_channel
+    strong_direct = official_signal or title_signal or channel_match or trusted_channel
+    return (not strong_direct) or suspicious_channel
 
 
 def resolve_live_youtube_watch_url(
@@ -1965,6 +1999,7 @@ def main() -> None:
     selected_youtube = str(selected_youtube).strip()
     selected_youtube_watch = str(selected_youtube_watch).strip()
     selected_spotify_track_id = extract_spotify_track_id(selected_spotify)
+    youtube_embed_blocked = False
 
     # If embed target looks unavailable, force one live resolver attempt before rendering player.
     if (playback_platform in {"YouTube", "Auto"}) and not selected_youtube_watch:
@@ -1979,6 +2014,15 @@ def main() -> None:
             selected_youtube = forced_link
         if forced_embed:
             selected_youtube_watch = forced_embed
+
+    if selected_youtube_watch and playback_platform in {"YouTube", "Auto"}:
+        try:
+            if not _is_youtube_embed_likely_available(selected_youtube_watch):
+                youtube_embed_blocked = True
+                selected_youtube_watch = ""
+        except Exception:
+            # Keep playback resilient even if the embed probe fails.
+            pass
 
     st.markdown(
         f'**{selected_row["artist"]} - {selected_row["track"]}** · {selected_row["duration_text"]} '
@@ -1998,10 +2042,16 @@ def main() -> None:
         if selected_youtube_watch:
             st.video(selected_youtube_watch)
         elif selected_spotify_track_id:
-            st.info("YouTube embed unavailable for this track. Falling back to Spotify player.")
+            if youtube_embed_blocked:
+                st.info("This YouTube video can't be embedded here. Falling back to Spotify player.")
+            else:
+                st.info("YouTube embed unavailable for this track. Falling back to Spotify player.")
             _render_spotify_embed(selected_spotify_track_id)
         elif selected_youtube:
-            st.info("No direct YouTube video ID available for embed. Use the YouTube button.")
+            if youtube_embed_blocked:
+                st.info("This YouTube video can't be embedded here. Use the YouTube button.")
+            else:
+                st.info("No direct YouTube video ID available for embed. Use the YouTube button.")
     elif playback_platform == "Spotify":
         if selected_spotify_track_id:
             _render_spotify_embed(selected_spotify_track_id)

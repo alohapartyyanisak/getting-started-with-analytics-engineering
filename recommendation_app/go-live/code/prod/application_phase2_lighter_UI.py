@@ -1000,6 +1000,7 @@ def main() -> None:
     selected_youtube = str(selected_youtube).strip()
     selected_youtube_watch = str(selected_youtube_watch).strip()
     selected_spotify_track_id = base_app.extract_spotify_track_id(selected_spotify)
+    youtube_embed_blocked = False
 
     if (playback_platform in {"YouTube", "Auto"}) and not selected_youtube_watch:
         forced_link, forced_embed = base_app.resolve_playback_youtube_targets(selected_row, force_live=True, live_timeout=4)
@@ -1009,6 +1010,14 @@ def main() -> None:
             selected_youtube = forced_link
         if forced_embed:
             selected_youtube_watch = forced_embed
+
+    if selected_youtube_watch and playback_platform in {"YouTube", "Auto"}:
+        try:
+            if not base_app._is_youtube_embed_likely_available(selected_youtube_watch):
+                youtube_embed_blocked = True
+                selected_youtube_watch = ""
+        except Exception:
+            pass
 
     base_app.st.markdown(
         f'**{selected_row["artist"]} - {selected_row["track"]}** · {selected_row["duration_text"]} '
@@ -1023,10 +1032,16 @@ def main() -> None:
         if selected_youtube_watch:
             phase2_app._ORIGINAL_ST_VIDEO(selected_youtube_watch)
         elif selected_spotify_track_id:
-            base_app.st.info("YouTube embed unavailable for this track. Falling back to Spotify player.")
+            if youtube_embed_blocked:
+                base_app.st.info("This YouTube video can't be embedded here. Falling back to Spotify player.")
+            else:
+                base_app.st.info("YouTube embed unavailable for this track. Falling back to Spotify player.")
             _render_spotify_embed(selected_spotify_track_id)
         elif selected_youtube:
-            base_app.st.info("No direct YouTube video ID available for embed. Use the YouTube button.")
+            if youtube_embed_blocked:
+                base_app.st.info("This YouTube video can't be embedded here. Use the YouTube button.")
+            else:
+                base_app.st.info("No direct YouTube video ID available for embed. Use the YouTube button.")
     elif playback_platform == "Spotify":
         if selected_spotify_track_id:
             _render_spotify_embed(selected_spotify_track_id)
