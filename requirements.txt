@@ -1,7 +1,7 @@
 cachetools
 gcsfs
 numpy
-pandas
-pyarrow
+pandas==2.2.2
+pyarrow==14.0.2
 python-dotenv
 streamlit
