@@ -243,6 +243,18 @@ def _render_tracked_platform_link(
     )
 
 
+def _render_direct_platform_link(label: str, target_url: str) -> None:
+    safe_label = escape(str(label or "").strip())
+    safe_href = escape(str(target_url or "").strip(), quote=True)
+    base_app.st.markdown(
+        (
+            f'<a class="platform-link" href="{safe_href}" target="_blank" '
+            f'rel="noopener noreferrer">{safe_label}</a>'
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def _handle_pending_tracked_open(
     *,
     default_browser_id: str,
@@ -1003,33 +1015,9 @@ def main() -> None:
         f'· Momentum {selected_row["momentum_score"]:.3f}'
     )
     if selected_spotify:
-        spotify_tracked_url = _tracked_outbound_url(
-            target_url=selected_spotify,
-            open_event="spotify_opened",
-            traffic_source=traffic_source,
-            anonymous_browser_id=anonymous_browser_id,
-            session_id=session_id,
-            request_id=request_id,
-            platform="spotify",
-            track_name=str(selected_row["track"]),
-            artist_name=str(selected_row["artist"]),
-            playlist_position=int(selected_row["position"]),
-        )
-        _render_tracked_platform_link("Spotify", selected_spotify, tracked_url=spotify_tracked_url)
+        _render_direct_platform_link("Spotify", selected_spotify)
     if selected_youtube:
-        youtube_tracked_url = _tracked_outbound_url(
-            target_url=selected_youtube,
-            open_event="youtube_opened",
-            traffic_source=traffic_source,
-            anonymous_browser_id=anonymous_browser_id,
-            session_id=session_id,
-            request_id=request_id,
-            platform="youtube",
-            track_name=str(selected_row["track"]),
-            artist_name=str(selected_row["artist"]),
-            playlist_position=int(selected_row["position"]),
-        )
-        _render_tracked_platform_link("YouTube", selected_youtube, tracked_url=youtube_tracked_url)
+        _render_direct_platform_link("YouTube", selected_youtube)
 
     if playback_platform == "YouTube":
         if selected_youtube_watch:
@@ -1078,10 +1066,11 @@ def main() -> None:
                 base_app.st.markdown(
                     (
                         f'<a class="platform-link" href="{escape(playlist_url, quote=True)}" target="_blank" '
-                        'rel="noopener noreferrer">Open Temporary YouTube Playlist</a>'
+                        'rel="noopener noreferrer">Open Full Temporary YouTube Playlist</a>'
                     ),
                     unsafe_allow_html=True,
                 )
+                base_app.st.caption("This opens the whole generated YouTube playlist, not just the current Now Playing track.")
             else:
                 base_app.st.caption("Temporary YouTube playlist link requires at least 2 playable YouTube IDs.")
             if sidebar_target_rows > 0:
