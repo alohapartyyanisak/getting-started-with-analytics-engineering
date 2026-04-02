@@ -11,6 +11,7 @@ from urllib.parse import unquote, urlparse
 
 import pandas as pd
 
+from phase2_atomic_io import write_json_atomic
 import phase2_runtime_config as cfg
 from phase2_managed_loader import load_prepared_dataset, release_summary
 
@@ -42,6 +43,31 @@ def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _path_from_report_metadata(dataset_root: Path, metadata: dict[str, Any]) -> list[tuple[Path, str]]:
+    pq_meta = metadata.get("problem_queue_revalidation") or {}
+    source_meta = metadata.get("source") or {}
+    incremental_meta = metadata.get("incremental") or {}
+    paths: list[tuple[Path, str]] = []
+
+    input_report = _path_from_text(pq_meta.get("input_report", ""))
+    if input_report:
+        paths.append((input_report, "metadata_input_report"))
+
+    carried_forward = _path_from_text(pq_meta.get("input_report_carried_forward_path", ""))
+    if carried_forward:
+        paths.append((carried_forward, "metadata_carried_forward_report"))
+
+    for parent_version in (
+        str(source_meta.get("parent_dataset_version", "") or "").strip(),
+        str(incremental_meta.get("parent_dataset_version", "") or "").strip(),
+    ):
+        if parent_version:
+            paths.append(
+                (dataset_root / "snapshots" / parent_version / "youtube_link_revalidation_report.csv", "parent_snapshot")
+            )
+    return paths
+
+
 def _load_phase2_test_module() -> Any:
     test_dir = cfg.REPO_ROOT / "recommendation_app" / "go-live" / "code" / "test"
     if str(test_dir) not in sys.path:
@@ -64,10 +90,10 @@ def _first_nonempty_text(*values: object) -> str:
     return ""
 
 
-def _path_from_text(value: object) -> Path:
+def _path_from_text(value: object) -> Path | None:
     text = str(value or "").strip()
     if not text:
-        return Path("")
+        return None
     if text.startswith("file://"):
         parsed = urlparse(text)
         return Path(unquote(parsed.path)).expanduser()
@@ -75,23 +101,22 @@ def _path_from_text(value: object) -> Path:
 
 
 def _load_latest_report(dataset_root: Path, release_version: str) -> tuple[pd.DataFrame, Path]:
-    report_path = dataset_root / "snapshots" / release_version / "youtube_link_revalidation_report.csv"
-    if report_path.exists():
-        return pd.read_csv(report_path), report_path.resolve()
-
     metadata_path = dataset_root / "snapshots" / release_version / "metadata.json"
+    candidate_paths: list[tuple[Path, str]] = [
+        (dataset_root / "snapshots" / release_version / "youtube_link_revalidation_report.csv", "current_snapshot")
+    ]
     if metadata_path.exists():
         metadata = _read_json(metadata_path)
-        pq_meta = metadata.get("problem_queue_revalidation") or {}
-        input_report = _path_from_text(pq_meta.get("input_report", ""))
-        if input_report.exists():
-            return pd.read_csv(input_report), input_report.resolve()
-        source_meta = metadata.get("source") or {}
-        parent_version = str(source_meta.get("parent_dataset_version", "") or "").strip()
-        if parent_version:
-            parent_report = dataset_root / "snapshots" / parent_version / "youtube_link_revalidation_report.csv"
-            if parent_report.exists():
-                return pd.read_csv(parent_report), parent_report.resolve()
+        candidate_paths.extend(_path_from_report_metadata(dataset_root, metadata))
+
+    seen: set[str] = set()
+    for path, _label in candidate_paths:
+        resolved = str(path.resolve()) if path.exists() else str(path)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if path.exists():
+            return pd.read_csv(path), path.resolve()
 
     raise FileNotFoundError(f"Revalidation report not found for release {release_version}")
 
@@ -132,6 +157,7 @@ def revalidate_problem_queue(
     audit_rows: list[dict[str, Any]] = []
     row_states: list[dict[str, Any]] = []
     resolver_keys_to_fetch: set[tuple[str, str, str]] = set()
+    direct_playability_cache: dict[str, bool] = {}
 
     for _pos, item in problem_df.iterrows():
         rows_examined += 1
@@ -167,7 +193,14 @@ def revalidate_problem_queue(
             _first_nonempty_text(row.get("youtube_link"), row.get("url_youtube"))
         )
         direct_id = base_app.extract_youtube_video_id(direct_watch) if direct_watch else None
-        direct_ok = bool(direct_id and phase2_test_app._is_video_playlist_playable_phase2(str(direct_id), timeout=6))
+        direct_ok = False
+        if direct_id:
+            direct_id_text = str(direct_id)
+            if direct_id_text not in direct_playability_cache:
+                direct_playability_cache[direct_id_text] = bool(
+                    phase2_test_app._is_video_playlist_playable_phase2(direct_id_text, timeout=6)
+                )
+            direct_ok = direct_playability_cache[direct_id_text]
         resolver_key = (artist, track, credits)
         if not direct_ok:
             resolver_keys_to_fetch.add(resolver_key)
@@ -199,18 +232,25 @@ def revalidate_problem_queue(
         resolver_keys = sorted(allowed_resolver_keys)
     if resolver_keys:
         print(f"[problem-queue] resolving {len(resolver_keys)} unique keys")
+        if yt_resolver is not None:
+            cache_conn = None
+            try:
+                cache_conn = yt_resolver._cache_connect()  # type: ignore[union-attr]
+                for artist, track, _credits in resolver_keys:
+                    cache_key = yt_resolver._cache_key(artist, track)  # type: ignore[union-attr]
+                    cache_conn.execute("DELETE FROM youtube_resolver_cache WHERE yt_key = ?", (cache_key,))
+                cache_conn.commit()
+            except Exception:
+                pass
+            finally:
+                try:
+                    if cache_conn is not None:
+                        cache_conn.close()
+                except Exception:
+                    pass
 
         def _resolve_key(resolver_key: tuple[str, str, str]) -> tuple[tuple[str, str, str], tuple[str, str, float, bool], bool]:
             artist, track, credits = resolver_key
-            if yt_resolver is not None:
-                try:
-                    cache_key = yt_resolver._cache_key(artist, track)  # type: ignore[union-attr]
-                    conn = yt_resolver._cache_connect()  # type: ignore[union-attr]
-                    conn.execute("DELETE FROM youtube_resolver_cache WHERE yt_key = ?", (cache_key,))
-                    conn.commit()
-                    conn.close()
-                except Exception:
-                    pass
             try:
                 new_watch, resolver_reason, score = phase2_test_app.resolve_live_youtube_watch_url_phase2(
                     artist=artist,
@@ -425,7 +465,7 @@ def revalidate_problem_queue(
         "metadata_uri": cfg.storage_ref(metadata_path, dataset_root),
     }
     pointer_path = dataset_root / cfg.DATASET_POINTER_FILE
-    pointer_path.write_text(json.dumps(latest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(pointer_path, latest_payload)
 
     return {
         "status": "ok",

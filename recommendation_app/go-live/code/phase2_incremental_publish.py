@@ -11,6 +11,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from phase2_atomic_io import write_bytes_atomic
 import phase2_runtime_config as cfg
 
 
@@ -260,11 +261,19 @@ def incremental_publish(force: bool = False) -> dict[str, Any]:
                 "canonical_key",
             ].tolist()
         )
+        delete_keys = set(
+            current_keyed.loc[
+                ~current_keyed["canonical_key"].astype(str).isin(raw_keyed["canonical_key"].astype(str)),
+                "canonical_key",
+            ].tolist()
+        )
         unchanged_count = int(len(merged_digest) - len(insert_keys) - len(update_keys))
         delta_keys = insert_keys | update_keys
         delta_raw = raw_keyed[raw_keyed["canonical_key"].astype(str).isin(delta_keys)].reset_index(drop=True)
+    if current_df.empty:
+        delete_keys: set[str] = set()
 
-    if delta_raw.empty and not force:
+    if delta_raw.empty and not delete_keys and not force:
         return {
             "status": "noop",
             "reason": "NOOP_NO_DATA_CHANGE",
@@ -274,14 +283,18 @@ def incremental_publish(force: bool = False) -> dict[str, Any]:
             "source_files": source_files,
         }
 
-    delta_prepared = recommender_v2_adapter.prepare_music_data(delta_raw)
-    if delta_prepared.empty:
-        raise ValueError("Delta prepared dataset is empty; incremental publish aborted.")
+    if delta_raw.empty:
+        delta_prepared = pd.DataFrame()
+    else:
+        delta_prepared = recommender_v2_adapter.prepare_music_data(delta_raw)
+        if delta_prepared.empty:
+            raise ValueError("Delta prepared dataset is empty; incremental publish aborted.")
 
     if current_df.empty:
         combined = delta_prepared.copy()
     else:
-        keep_current = current_df[~current_df["canonical_key"].astype(str).isin(update_keys)].copy()
+        keys_to_replace = update_keys | delete_keys
+        keep_current = current_df[~current_df["canonical_key"].astype(str).isin(keys_to_replace)].copy()
         combined = pd.concat([keep_current, delta_prepared], axis=0, ignore_index=True, sort=False)
 
     combined = combined.drop_duplicates(subset=["canonical_key"], keep="last").reset_index(drop=True)
@@ -347,12 +360,14 @@ def incremental_publish(force: bool = False) -> dict[str, Any]:
             "rows_raw": int(len(raw_df)),
             "source_fingerprint": source_fp,
             "source_files": source_files,
+            "parent_dataset_version": previous_release.version if previous_release else "",
         },
         "incremental": {
             "publish_mode": "incremental_upsert",
             "parent_dataset_version": previous_release.version if previous_release else "",
             "delta_insert_count": int(len(insert_keys)),
             "delta_update_count": int(len(update_keys)),
+            "delta_delete_count": int(len(delete_keys)),
             "delta_unchanged_count": int(unchanged_count),
             "compare_columns": compare_columns,
         },
@@ -369,7 +384,7 @@ def incremental_publish(force: bool = False) -> dict[str, Any]:
     }
     pointer_bytes = json.dumps(latest_payload, ensure_ascii=False, indent=2).encode("utf-8")
     pointer_path.parent.mkdir(parents=True, exist_ok=True)
-    pointer_path.write_bytes(pointer_bytes)
+    write_bytes_atomic(pointer_path, pointer_bytes)
 
     if cloud_root:
         root = cloud_root.rstrip("/")
@@ -386,6 +401,10 @@ def incremental_publish(force: bool = False) -> dict[str, Any]:
         + [
             {"canonical_key": key, "change_type": "update"}
             for key in sorted(update_keys)
+        ]
+        + [
+            {"canonical_key": key, "change_type": "delete"}
+            for key in sorted(delete_keys)
         ]
     )
     changelog_path = snapshot_dir / "delta_changes.csv"

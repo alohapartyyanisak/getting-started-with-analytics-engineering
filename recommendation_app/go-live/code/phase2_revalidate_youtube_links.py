@@ -10,6 +10,7 @@ from typing import Any
 
 import pandas as pd
 
+from phase2_atomic_io import write_json_atomic
 import phase2_runtime_config as cfg
 from phase2_managed_loader import load_prepared_dataset, release_summary
 
@@ -36,8 +37,7 @@ def _read_json(path: Path) -> Any:
 
 
 def _write_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(path, payload)
 
 
 def _resolver_key_to_text(resolver_key: tuple[str, str, str]) -> str:
@@ -528,7 +528,7 @@ def revalidate_youtube_links(
         "metadata_uri": cfg.storage_ref(metadata_path, dataset_root),
     }
     pointer_path = dataset_root / cfg.DATASET_POINTER_FILE
-    pointer_path.write_text(json.dumps(latest_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(pointer_path, latest_payload)
 
     return {
         "status": "ok",

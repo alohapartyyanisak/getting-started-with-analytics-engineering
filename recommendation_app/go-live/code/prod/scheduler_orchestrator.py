@@ -18,6 +18,7 @@ CODE_ROOT = Path(__file__).resolve().parent.parent
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
+from phase2_atomic_io import write_json_atomic
 import phase2_runtime_config as cfg
 from phase2_managed_loader import load_prepared_dataset, pointer_path
 from phase2_weekly_validation_summary import build_validation_rows, build_validation_summary
@@ -49,8 +50,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(path, payload)
 
 
 def _write_parquet(path: Path, frame: pd.DataFrame) -> None:
@@ -79,10 +79,10 @@ def _verify_candidate_loads(dataset_root: Path, version: str) -> dict[str, Any]:
     }
 
 
-def _path_from_text(value: object) -> Path:
+def _path_from_text(value: object) -> Path | None:
     text = str(value or "").strip()
     if not text:
-        return Path("")
+        return None
     if text.startswith("file://"):
         parsed = urlparse(text)
         return Path(unquote(parsed.path)).expanduser()
@@ -90,24 +90,39 @@ def _path_from_text(value: object) -> Path:
 
 
 def _resolve_problem_queue_report_path(dataset_root: Path, release_version: str) -> tuple[Path, str]:
-    direct_path = dataset_root / "snapshots" / release_version / "youtube_link_revalidation_report.csv"
-    if direct_path.exists():
-        return direct_path.resolve(), "current_snapshot"
-
     metadata_path = dataset_root / "snapshots" / release_version / "metadata.json"
+    candidate_paths: list[tuple[Path, str]] = []
+
+    direct_path = dataset_root / "snapshots" / release_version / "youtube_link_revalidation_report.csv"
+    candidate_paths.append((direct_path, "current_snapshot"))
+
     if metadata_path.exists():
         metadata = _read_json(metadata_path)
         pq_meta = metadata.get("problem_queue_revalidation") or {}
         input_report = _path_from_text(pq_meta.get("input_report", ""))
-        if input_report.exists():
-            return input_report.resolve(), "metadata_input_report"
+        if input_report:
+            candidate_paths.append((input_report, "metadata_input_report"))
+
+        carried_forward = _path_from_text(pq_meta.get("input_report_carried_forward_path", ""))
+        if carried_forward:
+            candidate_paths.append((carried_forward, "metadata_carried_forward_report"))
 
         source_meta = metadata.get("source") or {}
-        parent_version = str(source_meta.get("parent_dataset_version", "") or "").strip()
-        if parent_version:
-            parent_path = dataset_root / "snapshots" / parent_version / "youtube_link_revalidation_report.csv"
-            if parent_path.exists():
-                return parent_path.resolve(), "parent_snapshot"
+        incremental_meta = metadata.get("incremental") or {}
+        parent_versions = [
+            str(source_meta.get("parent_dataset_version", "") or "").strip(),
+            str(incremental_meta.get("parent_dataset_version", "") or "").strip(),
+        ]
+        for parent_version in parent_versions:
+            if not parent_version:
+                continue
+            candidate_paths.append(
+                (dataset_root / "snapshots" / parent_version / "youtube_link_revalidation_report.csv", "parent_snapshot")
+            )
+
+    for candidate_path, label in candidate_paths:
+        if candidate_path.exists():
+            return candidate_path.resolve(), label
 
     raise FileNotFoundError(f"Revalidation report not found for release {release_version}")
 

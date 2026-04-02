@@ -12,6 +12,7 @@ CODE_ROOT = Path(__file__).resolve().parent.parent
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
+from phase2_atomic_io import write_json_atomic
 import phase2_runtime_config as cfg
 from phase2_managed_loader import pointer_path, resolve_release
 
@@ -21,8 +22,7 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_json_atomic(path, payload)
 
 
 def _available_versions(dataset_root: Path) -> list[str]:
