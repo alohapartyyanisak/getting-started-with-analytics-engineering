@@ -62,6 +62,7 @@ def _product_envelope(
     request_id: str,
     dataset_snapshot_id: str,
     page: str,
+    traffic_source: str,
 ) -> dict[str, Any]:
     event_ts = _utc_now_iso()
     return {
@@ -76,6 +77,7 @@ def _product_envelope(
         "dataset_snapshot_id": dataset_snapshot_id or "unknown_dataset",
         "launch_stage": _text_env("GO_LIVE_LAUNCH_STAGE", DEFAULT_LAUNCH_STAGE),
         "page": page or "studio_home",
+        "traffic_source": traffic_source or _text_env("GO_LIVE_PRODUCT_TRAFFIC_SOURCE", "external_public"),
         "lane": "lighter",
         "severity": "INFO",
         "metadata": _service_metadata(),
@@ -114,6 +116,7 @@ def emit_product_event(
     request_id: str,
     dataset_snapshot_id: str,
     page: str = "studio_home",
+    traffic_source: str = "",
     **event_props: Any,
 ) -> None:
     record = _product_envelope(
@@ -123,6 +126,7 @@ def emit_product_event(
         request_id=request_id,
         dataset_snapshot_id=dataset_snapshot_id,
         page=page,
+        traffic_source=traffic_source,
     )
     record["event_props"] = event_props
     try:

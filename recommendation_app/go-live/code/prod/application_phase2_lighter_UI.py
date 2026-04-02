@@ -6,6 +6,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pandas as pd
 
@@ -105,6 +106,58 @@ def _product_event_state() -> dict[str, Any]:
     return state
 
 
+def _query_param_values(name: str) -> list[str]:
+    values: list[str] = []
+    try:
+        query_params = getattr(base_app.st, "query_params", None)
+        if query_params is not None:
+            raw = query_params.get(name)
+            if isinstance(raw, list):
+                values.extend(str(item).strip() for item in raw if str(item).strip())
+            elif raw is not None:
+                text = str(raw).strip()
+                if text:
+                    values.append(text)
+    except Exception:
+        pass
+
+    if not values:
+        try:
+            ctx = getattr(base_app.st, "context", None)
+            request = getattr(ctx, "request", None) if ctx is not None else None
+            url = getattr(request, "url", "") if request is not None else ""
+            if url:
+                parsed = urlparse(str(url))
+                query = parse_qs(parsed.query)
+                values.extend(str(item).strip() for item in query.get(name, []) if str(item).strip())
+        except Exception:
+            pass
+    return values
+
+
+def _product_traffic_source() -> str:
+    state_key = "public_product_traffic_source"
+    cached = str(base_app.st.session_state.get(state_key, "") or "").strip()
+    if cached:
+        return cached
+
+    traffic_source = ""
+    explicit_values = _query_param_values("traffic_source")
+    if explicit_values:
+        traffic_source = explicit_values[-1].strip().lower()
+
+    if not traffic_source:
+        internal_test_values = _query_param_values("internal_test")
+        if any(value.strip().lower() in {"1", "true", "yes", "y", "on"} for value in internal_test_values):
+            traffic_source = "internal_test"
+
+    if not traffic_source:
+        traffic_source = "external_public"
+
+    base_app.st.session_state[state_key] = traffic_source
+    return traffic_source
+
+
 def _emit_product_event_once(
     state_key: str,
     event_name: str,
@@ -114,6 +167,7 @@ def _emit_product_event_once(
     request_id: str,
     dataset_snapshot_id: str,
     page: str = "studio_home",
+    traffic_source: str = "",
     **event_props: Any,
 ) -> None:
     state = _product_event_state()
@@ -126,6 +180,7 @@ def _emit_product_event_once(
         request_id=request_id,
         dataset_snapshot_id=dataset_snapshot_id,
         page=page,
+        traffic_source=traffic_source,
         **event_props,
     )
     state[state_key] = True
@@ -141,6 +196,7 @@ def _emit_product_event_if_changed(
     request_id: str,
     dataset_snapshot_id: str,
     page: str = "studio_home",
+    traffic_source: str = "",
     **event_props: Any,
 ) -> None:
     state = _product_event_state()
@@ -153,6 +209,7 @@ def _emit_product_event_if_changed(
         request_id=request_id,
         dataset_snapshot_id=dataset_snapshot_id,
         page=page,
+        traffic_source=traffic_source,
         **event_props,
     )
     state[state_key] = new_value
@@ -368,6 +425,7 @@ def main() -> None:
     dataset_snapshot_id = _dataset_snapshot_id(source_path)
     anonymous_browser_id = _anonymous_browser_id()
     session_id = _session_id()
+    traffic_source = _product_traffic_source()
     _ensure_public_cache_version()
     request_id = str(base_app.st.session_state.get("public_request_id", "") or "").strip()
 
@@ -378,6 +436,7 @@ def main() -> None:
         session_id=session_id,
         request_id=request_id,
         dataset_snapshot_id=dataset_snapshot_id,
+        traffic_source=traffic_source,
         landing_path="studio_home",
         referrer="unknown",
         user_agent_family="unknown",
@@ -389,6 +448,7 @@ def main() -> None:
         session_id=session_id,
         request_id=request_id,
         dataset_snapshot_id=dataset_snapshot_id,
+        traffic_source=traffic_source,
         page_load_ms=int((time.perf_counter() - app_boot_started_at) * 1000),
     )
 
@@ -458,6 +518,7 @@ def main() -> None:
         session_id=session_id,
         request_id=request_id,
         dataset_snapshot_id=dataset_snapshot_id,
+        traffic_source=traffic_source,
         mode=normalized_mode,
         start_mode=normalized_start_mode,
         vibe_option=vibe_option,
@@ -480,6 +541,7 @@ def main() -> None:
                 session_id=session_id,
                 request_id=request_id,
                 dataset_snapshot_id=dataset_snapshot_id,
+                traffic_source=traffic_source,
                 control_name=control_name,
                 control_value=control_value,
             )
@@ -497,6 +559,7 @@ def main() -> None:
                 session_id=session_id,
                 request_id=request_id,
                 dataset_snapshot_id=dataset_snapshot_id,
+                traffic_source=traffic_source,
                 artist_name=artist_name,
                 selection_count_after=len(current_selected_artists),
             )
@@ -508,6 +571,7 @@ def main() -> None:
                 session_id=session_id,
                 request_id=request_id,
                 dataset_snapshot_id=dataset_snapshot_id,
+                traffic_source=traffic_source,
                 track_name=song_name,
                 selection_count_after=len(current_selected_songs),
             )
@@ -600,6 +664,7 @@ def main() -> None:
                 session_id=session_id,
                 request_id=request_id,
                 dataset_snapshot_id=dataset_snapshot_id,
+                traffic_source=traffic_source,
                 failure_reason="request_pipeline_failure",
                 error_type=type(exc).__name__,
                 time_to_playlist_ms=int((time.perf_counter() - request_started_at) * 1000),
@@ -644,6 +709,7 @@ def main() -> None:
                 session_id=session_id,
                 request_id=request_id,
                 dataset_snapshot_id=dataset_snapshot_id,
+                traffic_source=traffic_source,
                 failure_reason="empty_playlist",
                 time_to_playlist_ms=int((time.perf_counter() - request_started_at) * 1000),
             )
@@ -673,6 +739,7 @@ def main() -> None:
             session_id=session_id,
             request_id=request_id,
             dataset_snapshot_id=dataset_snapshot_id,
+            traffic_source=traffic_source,
             track_count=len(queue),
             playlist_minutes_target=int(target_minutes),
             playlist_minutes_actual=int(playlist_total_minutes),
