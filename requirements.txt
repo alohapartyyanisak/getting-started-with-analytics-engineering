@@ -1,6 +1,6 @@
 cachetools
 gcsfs
-numpy
+numpy==1.26.4
 pandas==2.2.2
 pyarrow==14.0.2
 python-dotenv
