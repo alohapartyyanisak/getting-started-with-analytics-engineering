@@ -9,6 +9,7 @@ from typing import Any
 
 DEFAULT_SCORING_CONFIG_VERSION = "score_cfg_v1"
 DEFAULT_RESOLVER_VERSION = "resolver_v1"
+DEFAULT_LAUNCH_STAGE = "soft_launch"
 
 
 def _utc_now_iso() -> str:
@@ -38,6 +39,7 @@ def _envelope(
     severity: str,
 ) -> dict[str, Any]:
     return {
+        "event_type": "operational",
         "event_name": event_name,
         "event_ts": _utc_now_iso(),
         "request_id": request_id or "unknown_request",
@@ -48,6 +50,34 @@ def _envelope(
         "resolver_version": _text_env("GO_LIVE_RESOLVER_VERSION", DEFAULT_RESOLVER_VERSION),
         "severity": severity,
         "lane": "lighter",
+        "metadata": _service_metadata(),
+    }
+
+
+def _product_envelope(
+    *,
+    event_name: str,
+    anonymous_browser_id: str,
+    session_id: str,
+    request_id: str,
+    dataset_snapshot_id: str,
+    page: str,
+) -> dict[str, Any]:
+    event_ts = _utc_now_iso()
+    return {
+        "event_type": "product_analytics",
+        "event_name": event_name,
+        "event_ts": event_ts,
+        "event_ts_utc": event_ts,
+        "anonymous_browser_id": anonymous_browser_id or "unknown_browser",
+        "session_id": session_id or "unknown_session",
+        "request_id": request_id or "unknown_request",
+        "app_release_version": _text_env("GO_LIVE_APP_RELEASE_VERSION", _text_env("K_REVISION", "unknown_release")),
+        "dataset_snapshot_id": dataset_snapshot_id or "unknown_dataset",
+        "launch_stage": _text_env("GO_LIVE_LAUNCH_STAGE", DEFAULT_LAUNCH_STAGE),
+        "page": page or "studio_home",
+        "lane": "lighter",
+        "severity": "INFO",
         "metadata": _service_metadata(),
     }
 
@@ -69,6 +99,32 @@ def emit_event(
         severity=severity,
     )
     record.update(payload)
+    try:
+        sys.stdout.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+        sys.stdout.flush()
+    except Exception:
+        return
+
+
+def emit_product_event(
+    event_name: str,
+    *,
+    anonymous_browser_id: str,
+    session_id: str,
+    request_id: str,
+    dataset_snapshot_id: str,
+    page: str = "studio_home",
+    **event_props: Any,
+) -> None:
+    record = _product_envelope(
+        event_name=event_name,
+        anonymous_browser_id=anonymous_browser_id,
+        session_id=session_id,
+        request_id=request_id,
+        dataset_snapshot_id=dataset_snapshot_id,
+        page=page,
+    )
+    record["event_props"] = event_props
     try:
         sys.stdout.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
         sys.stdout.flush()

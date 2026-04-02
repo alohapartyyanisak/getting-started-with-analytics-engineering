@@ -19,6 +19,7 @@ from prod.application_phase2 import patch_base_app_for_phase2, base_app, read_so
 from prod.go_live_structured_logging import (
     emit_error,
     emit_playlist_optimized,
+    emit_product_event,
     emit_ranking_completed,
     emit_request_received,
     emit_resolver_quality_evaluated,
@@ -86,6 +87,84 @@ def _session_id() -> str:
         session_id = str(uuid.uuid4())
         base_app.st.session_state["public_session_id"] = session_id
     return session_id
+
+
+def _anonymous_browser_id() -> str:
+    browser_id = str(base_app.st.session_state.get("public_anonymous_browser_id", "") or "").strip()
+    if not browser_id:
+        browser_id = str(uuid.uuid4())
+        base_app.st.session_state["public_anonymous_browser_id"] = browser_id
+    return browser_id
+
+
+def _product_event_state() -> dict[str, Any]:
+    state = base_app.st.session_state.get("public_product_event_state")
+    if not isinstance(state, dict):
+        state = {}
+        base_app.st.session_state["public_product_event_state"] = state
+    return state
+
+
+def _emit_product_event_once(
+    state_key: str,
+    event_name: str,
+    *,
+    anonymous_browser_id: str,
+    session_id: str,
+    request_id: str,
+    dataset_snapshot_id: str,
+    page: str = "studio_home",
+    **event_props: Any,
+) -> None:
+    state = _product_event_state()
+    if state.get(state_key):
+        return
+    emit_product_event(
+        event_name,
+        anonymous_browser_id=anonymous_browser_id,
+        session_id=session_id,
+        request_id=request_id,
+        dataset_snapshot_id=dataset_snapshot_id,
+        page=page,
+        **event_props,
+    )
+    state[state_key] = True
+
+
+def _emit_product_event_if_changed(
+    state_key: str,
+    new_value: Any,
+    event_name: str,
+    *,
+    anonymous_browser_id: str,
+    session_id: str,
+    request_id: str,
+    dataset_snapshot_id: str,
+    page: str = "studio_home",
+    **event_props: Any,
+) -> None:
+    state = _product_event_state()
+    if state.get(state_key) == new_value:
+        return
+    emit_product_event(
+        event_name,
+        anonymous_browser_id=anonymous_browser_id,
+        session_id=session_id,
+        request_id=request_id,
+        dataset_snapshot_id=dataset_snapshot_id,
+        page=page,
+        **event_props,
+    )
+    state[state_key] = new_value
+
+
+def _normalize_selection_values(values: list[Any] | tuple[Any, ...] | None) -> list[str]:
+    normalized: list[str] = []
+    for value in values or []:
+        text = str(value or "").strip()
+        if text:
+            normalized.append(text)
+    return normalized
 
 
 
@@ -256,6 +335,7 @@ def _ensure_public_cache_version() -> None:
 
 
 def main() -> None:
+    app_boot_started_at = time.perf_counter()
     patch_base_app_for_phase2()
 
     base_app.st.set_page_config(page_title="DJ Mixing Station Studio", page_icon="🎵", layout="wide")
@@ -286,8 +366,31 @@ def main() -> None:
         base_app.st.stop()
 
     dataset_snapshot_id = _dataset_snapshot_id(source_path)
+    anonymous_browser_id = _anonymous_browser_id()
     session_id = _session_id()
     _ensure_public_cache_version()
+    request_id = str(base_app.st.session_state.get("public_request_id", "") or "").strip()
+
+    _emit_product_event_once(
+        "session_started",
+        "session_started",
+        anonymous_browser_id=anonymous_browser_id,
+        session_id=session_id,
+        request_id=request_id,
+        dataset_snapshot_id=dataset_snapshot_id,
+        landing_path="studio_home",
+        referrer="unknown",
+        user_agent_family="unknown",
+    )
+    _emit_product_event_once(
+        "landing_viewed",
+        "landing_viewed",
+        anonymous_browser_id=anonymous_browser_id,
+        session_id=session_id,
+        request_id=request_id,
+        dataset_snapshot_id=dataset_snapshot_id,
+        page_load_ms=int((time.perf_counter() - app_boot_started_at) * 1000),
+    )
 
     seed_weights, experience_state = base_app.render_seed_experience(data)
 
@@ -343,6 +446,73 @@ def main() -> None:
     if experience_state.get("experience_mode") == "Self Mix":
         preferred_artist_weight_items = tuple(sorted(base_app._build_preferred_artist_weights(data).items()))
     include_seed_tracks = discovery_hits_pct == 100
+
+    normalized_mode = _normalize_mode(str(experience_state.get("experience_mode", "Self Mix")))
+    normalized_start_mode = _normalize_start_mode(experience_state)
+    vibe_option = str(experience_state.get("quick_vibe") or base_app.st.session_state.get("self_mix_vibe_option") or "")
+    _emit_product_event_if_changed(
+        "mode_selected",
+        (normalized_mode, normalized_start_mode, vibe_option),
+        "mode_selected",
+        anonymous_browser_id=anonymous_browser_id,
+        session_id=session_id,
+        request_id=request_id,
+        dataset_snapshot_id=dataset_snapshot_id,
+        mode=normalized_mode,
+        start_mode=normalized_start_mode,
+        vibe_option=vibe_option,
+    )
+
+    control_state = {
+        "platform_bias_spotify_pct": int(spotify_weight_pct),
+        "discovery_hits_pct": int(discovery_hits_pct),
+        "target_minutes": int(target_minutes),
+        "vibe_option": vibe_option,
+    }
+    previous_control_state = _product_event_state().get("control_state", {})
+    if not isinstance(previous_control_state, dict):
+        previous_control_state = {}
+    for control_name, control_value in control_state.items():
+        if previous_control_state.get(control_name) != control_value:
+            emit_product_event(
+                "controls_changed",
+                anonymous_browser_id=anonymous_browser_id,
+                session_id=session_id,
+                request_id=request_id,
+                dataset_snapshot_id=dataset_snapshot_id,
+                control_name=control_name,
+                control_value=control_value,
+            )
+    _product_event_state()["control_state"] = dict(control_state)
+
+    current_selected_artists = _normalize_selection_values(base_app.st.session_state.get("selected_seed_artists", []))
+    current_selected_songs = _normalize_selection_values(base_app.st.session_state.get("selected_seed_songs", []))
+    previous_selected_artists = set(_product_event_state().get("selected_seed_artists", []))
+    previous_selected_songs = set(_product_event_state().get("selected_seed_songs", []))
+    for artist_name in current_selected_artists:
+        if artist_name not in previous_selected_artists:
+            emit_product_event(
+                "artist_selected",
+                anonymous_browser_id=anonymous_browser_id,
+                session_id=session_id,
+                request_id=request_id,
+                dataset_snapshot_id=dataset_snapshot_id,
+                artist_name=artist_name,
+                selection_count_after=len(current_selected_artists),
+            )
+    for song_name in current_selected_songs:
+        if song_name not in previous_selected_songs:
+            emit_product_event(
+                "song_selected",
+                anonymous_browser_id=anonymous_browser_id,
+                session_id=session_id,
+                request_id=request_id,
+                dataset_snapshot_id=dataset_snapshot_id,
+                track_name=song_name,
+                selection_count_after=len(current_selected_songs),
+            )
+    _product_event_state()["selected_seed_artists"] = list(current_selected_artists)
+    _product_event_state()["selected_seed_songs"] = list(current_selected_songs)
 
     generation_signature = _generation_signature(
         seed_weight_items=seed_weight_items,
@@ -424,6 +594,16 @@ def main() -> None:
             )
             playlist_latency_ms = int((time.perf_counter() - playlist_started_at) * 1000)
         except Exception as exc:
+            emit_product_event(
+                "playlist_generation_failed",
+                anonymous_browser_id=anonymous_browser_id,
+                session_id=session_id,
+                request_id=request_id,
+                dataset_snapshot_id=dataset_snapshot_id,
+                failure_reason="request_pipeline_failure",
+                error_type=type(exc).__name__,
+                time_to_playlist_ms=int((time.perf_counter() - request_started_at) * 1000),
+            )
             if should_emit_request_logs:
                 emit_error(
                     request_id=request_id,
@@ -458,6 +638,15 @@ def main() -> None:
             )
 
         if playlist.empty:
+            emit_product_event(
+                "playlist_generation_failed",
+                anonymous_browser_id=anonymous_browser_id,
+                session_id=session_id,
+                request_id=request_id,
+                dataset_snapshot_id=dataset_snapshot_id,
+                failure_reason="empty_playlist",
+                time_to_playlist_ms=int((time.perf_counter() - request_started_at) * 1000),
+            )
             if should_emit_request_logs:
                 emit_error(
                     request_id=request_id,
@@ -477,6 +666,22 @@ def main() -> None:
         _store_cached_queue(generation_signature, queue)
         base_app.st.session_state.pop("public_temp_playlist_signature", None)
         base_app.st.session_state.pop("public_temp_playlist_payload", None)
+        playlist_total_minutes = int(queue.get("duration_ms", pd.Series(dtype=int)).fillna(0).sum() / 60000)
+        emit_product_event(
+            "playlist_generated",
+            anonymous_browser_id=anonymous_browser_id,
+            session_id=session_id,
+            request_id=request_id,
+            dataset_snapshot_id=dataset_snapshot_id,
+            track_count=len(queue),
+            playlist_minutes_target=int(target_minutes),
+            playlist_minutes_actual=int(playlist_total_minutes),
+            platform_bias_spotify_pct=int(spotify_weight_pct),
+            discovery_hits_pct=int(discovery_hits_pct),
+            selected_artists_count=len(current_selected_artists),
+            selected_songs_count=len(current_selected_songs),
+            time_to_playlist_ms=int((time.perf_counter() - request_started_at) * 1000),
+        )
 
     temp_playlist_payload = _load_or_build_temp_playlist_payload(generation_signature, queue)
     yt_stats = temp_playlist_payload.get("yt_stats", {}) if isinstance(temp_playlist_payload.get("yt_stats"), dict) else {}
