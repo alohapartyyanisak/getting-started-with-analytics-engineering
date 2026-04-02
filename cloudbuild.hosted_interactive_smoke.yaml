@@ -1,5 +1,5 @@
 steps:
-  - name: mcr.microsoft.com/playwright:v1.58.2-jammy
+  - name: mcr.microsoft.com/playwright:v1.59.1-jammy
     entrypoint: bash
     env:
       - APP_URL=${_APP_URL}
@@ -14,7 +14,7 @@ steps:
         set -euo pipefail
         mkdir -p recommendation_app/go-live/code/prod/.artifacts
         npm init -y >/dev/null 2>&1
-        npm install --no-save playwright >/dev/null 2>&1
+        npm install --no-save playwright@1.59.1 >/dev/null 2>&1
         set +e
         node recommendation_app/go-live/code/prod/hosted_interactive_smoke.mjs | tee recommendation_app/go-live/code/prod/.artifacts/hosted_interactive_smoke_result.json
         smoke_exit=${PIPESTATUS[0]}
