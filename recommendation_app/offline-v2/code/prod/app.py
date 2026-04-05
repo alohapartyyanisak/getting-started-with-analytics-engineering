@@ -943,25 +943,24 @@ def prefer_direct_youtube_url(youtube_link: object, fallback_url: object) -> str
 
 def resolve_playback_youtube_url(row: pd.Series) -> str:
     direct_watch = normalize_youtube_watch_url(row.get("youtube_link")) or normalize_youtube_watch_url(row.get("url_youtube"))
-    weak_direct = _should_try_live_youtube_override(row, direct_watch)
     search_fallback = build_youtube_search_url(
         row.get("artist", ""),
         row.get("track", ""),
         row.get("artist_credits", ""),
     )
-    if weak_direct:
-        live_watch, _, live_score = resolve_live_youtube_watch_url(
-            str(row.get("artist", "")),
-            str(row.get("track", "")),
-            str(row.get("artist_credits", "")),
-        )
-        # Only replace an existing direct link when the live resolver returns
-        # a strong candidate score.
-        if live_watch and (not direct_watch or live_score >= 8.0):
-            return live_watch
-
+    # For row-level playback, trust the current dataset's direct watch URL when it exists.
+    # The queue-level temp playlist has its own playability logic and can still resolve
+    # missing/unplayable rows independently without changing the selected-track target.
     if direct_watch:
         return direct_watch
+
+    live_watch, _, live_score = resolve_live_youtube_watch_url(
+        str(row.get("artist", "")),
+        str(row.get("track", "")),
+        str(row.get("artist_credits", "")),
+    )
+    if live_watch and live_score >= 8.0:
+        return live_watch
 
     fallback = str(row.get("youtube_link") or row.get("url_youtube") or "").strip()
     return fallback or search_fallback
@@ -978,15 +977,17 @@ def resolve_playback_youtube_targets(
     - embed_url: URL safe enough to attempt st.video embed.
     """
     direct_watch = normalize_youtube_watch_url(row.get("youtube_link")) or normalize_youtube_watch_url(row.get("url_youtube"))
-    weak_direct = _should_try_live_youtube_override(row, direct_watch)
     search_fallback = build_youtube_search_url(
         row.get("artist", ""),
         row.get("track", ""),
         row.get("artist_credits", ""),
     )
 
-    # Try live resolver for weak/missing direct links.
-    if force_live or weak_direct:
+    # For single-track playback, keep the snapshot's direct YouTube target stable when present.
+    if direct_watch and not force_live:
+        return direct_watch, direct_watch
+
+    if force_live or not direct_watch:
         live_watch, _, live_score = resolve_live_youtube_watch_url(
             str(row.get("artist", "")),
             str(row.get("track", "")),
