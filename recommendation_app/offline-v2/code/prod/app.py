@@ -151,6 +151,14 @@ QUICK_VIBE_DEFAULTS = {
     "Underground Explorer": {"mood": "Dark", "spotify_weight_pct": 50, "discovery_hits_pct": 20},
 }
 
+# Curated row-level YouTube overrides for known high-confidence exceptions.
+# These are intentionally narrow and keyed by canonical song identity so the
+# app can pin a specific watch URL when the published snapshot URL is not the
+# desired user-facing playback target.
+CURATED_YOUTUBE_WATCH_OVERRIDES: dict[str, str] = {
+    "sp:7ef4DlsgrMEH11cDZd32M6": "https://www.youtube.com/watch?v=DkeiKbqa02g",
+}
+
 
 def apply_theme() -> None:
     st.markdown(
@@ -941,8 +949,19 @@ def prefer_direct_youtube_url(youtube_link: object, fallback_url: object) -> str
     return str(youtube_link or fallback_url or "").strip()
 
 
+def curated_youtube_watch_override(row: pd.Series) -> str:
+    canonical_key = str(row.get("canonical_key", "") or "").strip()
+    if canonical_key and canonical_key in CURATED_YOUTUBE_WATCH_OVERRIDES:
+        return CURATED_YOUTUBE_WATCH_OVERRIDES[canonical_key]
+    uri = str(row.get("uri", "") or "").strip()
+    if uri.startswith("spotify:track:"):
+        spotify_key = f"sp:{uri.split(':')[-1]}"
+        return CURATED_YOUTUBE_WATCH_OVERRIDES.get(spotify_key, "")
+    return ""
+
+
 def resolve_playback_youtube_url(row: pd.Series) -> str:
-    direct_watch = normalize_youtube_watch_url(row.get("youtube_link")) or normalize_youtube_watch_url(row.get("url_youtube"))
+    direct_watch = curated_youtube_watch_override(row) or normalize_youtube_watch_url(row.get("youtube_link")) or normalize_youtube_watch_url(row.get("url_youtube"))
     search_fallback = build_youtube_search_url(
         row.get("artist", ""),
         row.get("track", ""),
@@ -976,7 +995,7 @@ def resolve_playback_youtube_targets(
     - link_url: URL to open via YouTube button.
     - embed_url: URL safe enough to attempt st.video embed.
     """
-    direct_watch = normalize_youtube_watch_url(row.get("youtube_link")) or normalize_youtube_watch_url(row.get("url_youtube"))
+    direct_watch = curated_youtube_watch_override(row) or normalize_youtube_watch_url(row.get("youtube_link")) or normalize_youtube_watch_url(row.get("url_youtube"))
     search_fallback = build_youtube_search_url(
         row.get("artist", ""),
         row.get("track", ""),
@@ -1107,7 +1126,8 @@ def build_playable_youtube_ids(
     for pos in range(target_rows):
         row = queue.iloc[pos]
         direct_watch = (
-            normalize_youtube_watch_url(row.get("youtube_url"))
+            curated_youtube_watch_override(row)
+            or normalize_youtube_watch_url(row.get("youtube_url"))
             or normalize_youtube_watch_url(row.get("youtube_link"))
             or normalize_youtube_watch_url(row.get("url_youtube"))
         )

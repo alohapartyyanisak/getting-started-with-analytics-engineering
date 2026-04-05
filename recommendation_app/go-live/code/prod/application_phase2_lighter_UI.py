@@ -29,7 +29,7 @@ from prod.go_live_structured_logging import (
     emit_seed_resolution_completed,
 )
 
-PUBLIC_UI_CACHE_VERSION = "studio_dev_playlist_v2"
+PUBLIC_UI_CACHE_VERSION = "studio_dev_playlist_v3"
 RESOLVER_UNRESOLVED_RATIO_WARN = 0.20
 RESOLVER_COVERAGE_RATIO_WARN = 0.80
 
